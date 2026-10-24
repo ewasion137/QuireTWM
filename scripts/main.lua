@@ -33,7 +33,7 @@ Quire.window_rules = { float = {} }
 Quire.config = {
     gaps_in = 8,
     gaps_out = 14,
-    default_column_width = 0.50,
+    default_column_width = 1.0, -- Полноразмерное окно по умолчанию (100% экрана)
     rounding = Quire.theme.rounding,
     border_size = Quire.theme.border_size,
     border_active = Quire.theme.active_border_color,
@@ -48,8 +48,11 @@ local launcher = require("launcher")
 
 -- Камера ленты
 local camera_x = 0.0
+local camera_y = 0.0
 local camera_target_x = 0.0
+local camera_target_y = 0.0
 local camera_vx = 0.0
+local camera_vy = 0.0
 
 -- Вспомогательная функция проверки воркспейса
 local function get_ws(ws_id)
@@ -144,7 +147,8 @@ function Quire.retile()
     for col_idx, col in ipairs(ws.columns) do
         local col_key = Quire.current_workspace .. "_" .. col_idx
         local col_ratio = Quire.column_widths[col_key] or cfg.default_column_width
-        local col_w = math.floor(sw * col_ratio)
+        local avail_w = sw - (cfg.gaps_out * 2)
+        local col_w = (col_ratio >= 0.99) and avail_w or math.floor(avail_w * col_ratio)
 
         local n_rows = #col
         local total_gap_y = cfg.gaps_in * (n_rows - 1)
@@ -298,6 +302,29 @@ function Quire.adjust_column_width(delta)
     Quire.retile()
 end
 
+-- Циклическое переключение пресетов ширины (1.0 -> 0.66 -> 0.50)
+local width_presets = { 1.0, 0.666, 0.50 }
+
+function Quire.cycle_column_preset()
+    local col_idx, _, _ = Quire.find_window_pos(Quire.focused_window)
+    if not col_idx then return end
+
+    local col_key = Quire.current_workspace .. "_" .. col_idx
+    local cur_ratio = Quire.column_widths[col_key] or Quire.config.default_column_width
+
+    -- Находим следующий пресет по кругу
+    local next_ratio = width_presets[1]
+    for i, p in ipairs(width_presets) do
+        if math.abs(cur_ratio - p) < 0.05 then
+            next_ratio = width_presets[(i % #width_presets) + 1]
+            break
+        end
+    end
+
+    Quire.column_widths[col_key] = next_ratio
+    Quire.retile()
+end
+
 -- ================= НАВИГАЦИЯ =================
 function Quire.focus_direction(dir)
     local col_idx, row_idx, ws = Quire.find_window_pos(Quire.focused_window)
@@ -333,17 +360,41 @@ function Quire.toggle_floating()
     local focused = Quire.focused_window
     if not focused then return end
 
+    local sw, sh = wm.get_screen_size()
+
     if Quire.floating_windows[focused] then
+        -- Возвращаем в ленту
         Quire.floating_windows[focused] = nil
         Quire.floating_rects[focused] = nil
-        add_window(focused, wm.get_window_title(focused), wm.get_class_name(focused))
+        local title = wm.get_window_title(focused)
+        local class = wm.get_class_name(focused)
+        local ws = get_ws(Quire.current_workspace)
+        table.insert(ws.columns, { focused })
+        Quire.retile()
     else
-        remove_window(focused)
+        -- Делаем плавающим: достаем из колонок
+        local col_idx, row_idx, ws = Quire.find_window_pos(focused)
+        if col_idx then
+            table.remove(ws.columns[col_idx], row_idx)
+            if #ws.columns[col_idx] == 0 then
+                table.remove(ws.columns, col_idx)
+            end
+        end
+
         Quire.floating_windows[focused] = true
-        local x, y, w, h = wm.get_window_rect(focused)
-        Quire.floating_rects[focused] = { x, y, w, h }
+        Quire.window_targets[focused] = nil
+        Quire.window_currents[focused] = nil
+
+        -- Задаем аккуратный размер по центру экрана (удобно для перетаскивания файлов)
+        local fw = math.floor(sw * 0.60)
+        local fh = math.floor(sh * 0.70)
+        local fx = math.floor((sw - fw) / 2)
+        local fy = math.floor((sh - fh) / 2)
+
+        Quire.floating_rects[focused] = { fx, fy, fw, fh }
+        wm.move_window(focused, fx, fy, fw, fh)
+        Quire.retile()
     end
-    Quire.retile()
 end
 
 function Quire.toggle_fullscreen()
@@ -476,6 +527,9 @@ Quire.on_ipc_request = function(req)
     elseif cmd == "fullscreen" then
         Quire.toggle_fullscreen()
         return "OK"
+    elseif cmd == "preset" then
+        Quire.cycle_column_preset()
+        return "OK"
     elseif cmd == "close" then
         if Quire.focused_window then wm.close_window(Quire.focused_window) end
         return "OK"
@@ -566,17 +620,17 @@ if not pcall(dofile, config_path) then
     Quire.bind("Alt+Shift+H", function() Quire.move_column("left") end)
     Quire.bind("Alt+Shift+L", function() Quire.move_column("right") end)
 
-    -- Ресайз активной колонки (Шире / Уже)
-    Quire.bind("Alt+Minus", function() Quire.adjust_column_width(-0.05) end)
-    Quire.bind("Alt+Equal", function() Quire.adjust_column_width(0.05) end)
-
     -- Управление окном
     Quire.bind("Alt+Q", function() if Quire.focused_window then wm.close_window(Quire.focused_window) end end)
     Quire.bind("Alt+F", Quire.toggle_fullscreen)
     Quire.bind("Alt+V", Quire.toggle_floating)
 
-    -- Лаунчер
-    Quire.bind("Alt+D", launcher.toggle)
+    Quire.bind("Alt+D", Quire.cycle_column_preset) -- Пресеты: 100% -> 66% -> 50%
+    Quire.bind("Alt+Minus", function() Quire.adjust_column_width(-0.05) end) -- Плавный ресайз
+    Quire.bind("Alt+Equal", function() Quire.adjust_column_width(0.05) end)
+
+    -- Лаунчер (перенесен на Alt + Space)
+    Quire.bind("Alt+Space", launcher.toggle)
     Quire.bind("Alt+Return", launcher.commit)
 
     -- Воркспейсы (Alt + 1..9 и Alt + Shift + 1..9)
