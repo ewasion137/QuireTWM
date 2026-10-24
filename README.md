@@ -120,4 +120,7 @@ The Named Pipe server accepts newline-delimited ASCII commands at `\\.\pipe\hypr
 
 ---
 
-*HyprWin is in active development and is a project build with help of AI, it's raw and buggy, ill be happy for you to write in the issues your suggestions to improve, found bugs or even contribute to it! I allow AI to contribute to the project, as is the project is made using AI, but make sure all works and all tested and nothing else breaks. * 
+*HyprWin is in active development and is a project build with help of AI, it's raw and buggy, ill be happy for you to write in the issues your suggestions to improve, found bugs or even contribute to it! I allow AI to contribute to the project, as is the project is made using AI, but make sure all works and all tested and nothing else breaks.*
+
+
+<img width="800" height="450" alt="0928-ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/eb15378e-6080-4eea-9e3e-4b3a1f0a3a8e" />
