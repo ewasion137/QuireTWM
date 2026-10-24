@@ -125,14 +125,20 @@ bool IsToplevelWindow(HWND hwnd) {
     GetWindowThreadProcessId(hwnd, &pid);
     if (pid == GetCurrentProcessId()) return false;
 
-    long style = GetWindowLong(hwnd, GWL_STYLE);
-    long ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+    if (!IsWindowVisible(hwnd)) return false;
+
+    LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
     HWND owner = GetWindow(hwnd, GW_OWNER);
 
     if (ex_style & WS_EX_TOPMOST) return false;
     if (ex_style & WS_EX_TOOLWINDOW) return false;
 
-    // Игнорируем эксклюзивный полноэкранный режим игр
+    int cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
+        return false;
+    }
+
     if ((style & WS_POPUP) && !(style & WS_CAPTION)) {
         RECT rc;
         GetWindowRect(hwnd, &rc);
@@ -143,17 +149,17 @@ bool IsToplevelWindow(HWND hwnd) {
         }
     }
 
-    bool isAppWindow = (ex_style & WS_EX_APPWINDOW) != 0;
-    bool isTopLevel = (style & WS_CAPTION) && (owner == NULL);
+    if (ex_style & WS_EX_APPWINDOW) return true;
 
-    if (!isAppWindow && !isTopLevel) return false;
-
-    int cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
-        return false;
+    if (owner == NULL && !(style & WS_CHILD)) {
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+        if ((rc.right - rc.left) > 150 && (rc.bottom - rc.top) > 100) {
+            return true;
+        }
     }
 
-    return true;
+    return false;
 }
 
 // Защита: восстанавливаем окна при выходе или краше
