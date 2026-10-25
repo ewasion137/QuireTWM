@@ -227,7 +227,23 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
     if (event == 0x800B || event == 0x800A) return;
 
     HWND root = GetAncestor(hwnd, GA_ROOT);
-    if (root != hwnd) {
+    if (root != hwnd) return;
+
+    // Блокировка перетаскивания окна руками (только для затайленых окон!)
+    if (event == EVENT_SYSTEM_MOVESIZESTART) {
+        LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+        if (ex_style & WS_EX_TOPMOST) return; // PiP и оверлеи никогда не трогаем
+
+        if (g_lua) {
+            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            sol::protected_function is_tiled = (*g_lua)["Quire"]["is_tiled"];
+            if (is_tiled.valid()) {
+                auto res = is_tiled(reinterpret_cast<size_t>(hwnd));
+                if (res.valid() && res.get<bool>()) {
+                    PostMessageA(hwnd, WM_CANCELMODE, 0, 0);
+                }
+            }
+        }
         return;
     }
 
@@ -286,6 +302,25 @@ int main() {
             char class_name[256] = {0};
             GetClassNameA(reinterpret_cast<HWND>(hwnd), class_name, sizeof(class_name));
             return std::string(class_name);
+        });
+
+        wm.set_function("get_process_name", [](size_t hwnd) {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(reinterpret_cast<HWND>(hwnd), &pid);
+            if (pid == 0) return std::string("");
+
+            HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            if (hProcess) {
+                char path[MAX_PATH];
+                DWORD size = MAX_PATH;
+                if (QueryFullProcessImageNameA(hProcess, 0, path, &size)) {
+                    CloseHandle(hProcess);
+                    std::string fullPath(path);
+                    return fullPath.substr(fullPath.find_last_of("\\/") + 1);
+                }
+                CloseHandle(hProcess);
+            }
+            return std::string("");
         });
 
         wm.set_function("register_hotkey", [](int id, int modifiers, int vk) {
@@ -410,6 +445,35 @@ int main() {
             return std::make_pair(GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
         });
 
+        wm.set_function("get_work_area", []() {
+            RECT rc;
+            if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &rc, 0)) {
+                APPBARDATA abd = { sizeof(APPBARDATA) };
+                UINT state = static_cast<UINT>(SHAppBarMessage(ABM_GETSTATE, &abd));
+                bool isAutoHide = (state & ABS_AUTOHIDE) != 0;
+
+                if (isAutoHide) {
+                    HWND hTaskbar = FindWindowA("Shell_TrayWnd", NULL);
+                    if (hTaskbar) {
+                        RECT rcBar;
+                        GetWindowRect(hTaskbar, &rcBar);
+                        int screen_h = GetSystemMetrics(SM_CYSCREEN);
+                        if (rcBar.top >= screen_h - 100) {
+                            rc.bottom = screen_h - 2;
+                        }
+                    }
+                }
+
+                return std::make_tuple(
+                    static_cast<int>(rc.left),
+                    static_cast<int>(rc.top),
+                    static_cast<int>(rc.right - rc.left),
+                    static_cast<int>(rc.bottom - rc.top)
+                );
+            }
+            return std::make_tuple(0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+        });
+
         wm.set_function("get_window_rect", [](size_t hwnd) {
             RECT rect = {0};
             if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(RECT)))) {
@@ -522,8 +586,10 @@ int main() {
                                                   WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
         HWINEVENTHOOK hook_minimize = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND,
                                                     NULL, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        HWINEVENTHOOK hook_movesize = SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND,
+                                                    NULL, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
 
-        if (!hook_objects || !hook_focus || !hook_minimize) {
+        if (!hook_objects || !hook_focus || !hook_minimize || !hook_movesize) {
             std::cerr << "Quire: Failed to register WinEventHooks!" << std::endl;
             return 1;
         }
@@ -580,6 +646,7 @@ int main() {
         UnhookWinEvent(hook_objects);
         UnhookWinEvent(hook_focus);
         UnhookWinEvent(hook_minimize);
+        UnhookWinEvent(hook_movesize);
         CleanupAltTabHook();
         RestoreAllWindows();
 

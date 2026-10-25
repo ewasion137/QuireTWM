@@ -40,8 +40,10 @@ Quire.config = {
 }
 
 package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua"
-local alttab = require("alttab")
-local launcher = require("launcher")
+alttab = require("alttab")
+launcher = require("launcher")
+Quire.launcher = launcher
+Quire.alttab = alttab
 
 local camera_x = 0.0
 local camera_y = 0.0
@@ -54,6 +56,15 @@ local hud_timer = 0.0
 
 local function trigger_hud()
     hud_timer = 1.4
+end
+
+function Quire.is_floating(hwnd)
+    return Quire.floating_windows[hwnd] == true
+end
+
+function Quire.is_tiled(hwnd)
+    local col_idx, _, _ = Quire.find_window_pos(hwnd)
+    return (col_idx ~= nil) and not Quire.floating_windows[hwnd]
 end
 
 local function get_ws(ws_id)
@@ -88,7 +99,7 @@ end
 local ignored_classes = {
     "WorkerW", "Progman", "Shell_TrayWnd", "QuireOverlay",
     "Chrome_ChildWin_Templ", "GhostWindow", "DesktopWindowXamlSource", 
-    "MSCTFIME UI", "IME", "CicMarshalWnd", "TaskManagerWindow"
+    "MSCTFIME UI", "IME", "CicMarshalWnd"
 }
 
 local function should_ignore(hwnd, title, class)
@@ -111,31 +122,49 @@ function Quire.find_window_pos(hwnd)
 end
 
 local function apply_rules(hwnd, title, class)
+    local proc = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
+    local low_title = (title or ""):lower()
+    local low_class = (class or ""):lower()
+
     for _, pattern in ipairs(Quire.window_rules.float) do
-        if class:match(pattern) or title:match(pattern) then
+        local p = pattern:lower()
+        if proc:find(p, 1, true) or low_title:find(p, 1, true) or low_class:find(p, 1, true) then
             Quire.floating_windows[hwnd] = true
-            local x, y, w, h = wm.get_window_rect(hwnd)
-            Quire.floating_rects[hwnd] = { x, y, w, h }
+
+            local wx, wy, ww, wh = wm.get_work_area()
+            local fw = math.floor(ww * 0.60)
+            local fh = math.floor(wh * 0.70)
+            local fx = wx + math.floor((ww - fw) / 2)
+            local fy = wy + math.floor((wh - fh) / 2)
+
+            Quire.floating_rects[hwnd] = { fx, fy, fw, fh }
+            wm.move_window(hwnd, fx, fy, fw, fh)
             return true
         end
     end
     return false
 end
 
-local function layout_columns(ws_id, sw, sh, cfg, avail_w)
+local function layout_columns(ws_id, wx, wy, ww, wh, cfg)
     local ws = get_ws(ws_id)
-    local cur_x = cfg.gaps_out
+    local pad = cfg.padding or { top = 0, bottom = 0, left = 0, right = 0 }
+
+    local base_x = wx + pad.left + cfg.gaps_out
+    local base_y = wy + pad.top + cfg.gaps_out
+    local avail_w = ww - pad.left - pad.right - (cfg.gaps_out * 2)
+    local avail_h = wh - pad.top - pad.bottom - (cfg.gaps_out * 2)
+
+    local cur_x = base_x
 
     for _, col in ipairs(ws.columns) do
         local col_w = (col.width >= 0.99) and avail_w or math.floor((avail_w - cfg.gaps_in) * col.width)
         local n_rows = #col.windows
         local total_gap_y = cfg.gaps_in * (n_rows - 1)
-        local avail_h = sh - (cfg.gaps_out * 2) - total_gap_y
-        local row_h = math.floor(avail_h / n_rows)
+        local row_h = math.floor((avail_h - total_gap_y) / n_rows)
 
-        local cur_y = cfg.gaps_out
+        local cur_y = base_y
         for row_idx, hwnd in ipairs(col.windows) do
-            local h = (row_idx == n_rows) and (sh - cfg.gaps_out - cur_y) or row_h
+            local h = (row_idx == n_rows) and (base_y + avail_h - cur_y) or row_h
             Quire.window_targets[hwnd] = {
                 world_x = cur_x,
                 y = cur_y,
@@ -146,11 +175,11 @@ local function layout_columns(ws_id, sw, sh, cfg, avail_w)
         end
         cur_x = cur_x + col_w + cfg.gaps_in
     end
-    return cur_x
+    return cur_x, avail_w
 end
 
 function Quire.retile()
-    local sw, sh = wm.get_screen_size()
+    local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
     local ws = get_ws(Quire.current_workspace)
 
@@ -164,7 +193,7 @@ function Quire.retile()
     end
 
     if fs_win then
-        Quire.window_targets[fs_win] = { world_x = 0, y = 0, w = sw, h = sh }
+        Quire.window_targets[fs_win] = { world_x = wx, y = wy, w = ww, h = wh }
         camera_target_x = 0
         return
     end
@@ -184,22 +213,24 @@ function Quire.retile()
     end
     ws.columns = cleaned_cols
 
-    local avail_w = sw - (cfg.gaps_out * 2)
-
     if Quire.animating_ws then
-        layout_columns(Quire.animating_ws, sw, sh, cfg, avail_w)
+        layout_columns(Quire.animating_ws, wx, wy, ww, wh, cfg)
     end
-    local total_w = layout_columns(Quire.current_workspace, sw, sh, cfg, avail_w)
+    local total_w, avail_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
 
     if Quire.focused_window and not Quire.floating_windows[Quire.focused_window] then
         local target = Quire.window_targets[Quire.focused_window]
         if target then
-            camera_target_x = target.world_x - math.floor((sw - target.w) / 2)
+            camera_target_x = target.world_x - math.floor((ww - target.w) / 2)
         end
     end
 
-    local max_cam_x = math.max(0, total_w - cfg.gaps_in + cfg.gaps_out - sw)
+    local max_cam_x = math.max(0, total_w - cfg.gaps_in + cfg.gaps_out - ww)
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
+
+    for _, c in pairs(Quire.window_currents) do
+        c.needs_sync = true
+    end
 end
 
 local function add_window(hwnd, title, class)
@@ -452,7 +483,7 @@ function Quire.toggle_floating()
     local focused = Quire.focused_window
     if not focused then return end
 
-    local sw, sh = wm.get_screen_size()
+    local wx, wy, ww, wh = wm.get_work_area()
 
     if Quire.floating_windows[focused] then
         Quire.floating_windows[focused] = nil
@@ -473,10 +504,10 @@ function Quire.toggle_floating()
         Quire.window_targets[focused] = nil
         Quire.window_currents[focused] = nil
 
-        local fw = math.floor(sw * 0.60)
-        local fh = math.floor(sh * 0.70)
-        local fx = math.floor((sw - fw) / 2)
-        local fy = math.floor((sh - fh) / 2)
+        local fw = math.floor(ww * 0.60)
+        local fh = math.floor(wh * 0.70)
+        local fx = wx + math.floor((ww - fw) / 2)
+        local fy = wy + math.floor((wh - fh) / 2)
 
         Quire.floating_rects[focused] = { fx, fy, fw, fh }
         wm.move_window(focused, fx, fy, fw, fh)
@@ -501,6 +532,22 @@ end
 Quire.dispatch_event = function(event_type, hwnd, title)
     local class = wm.get_class_name(hwnd)
     if should_ignore(hwnd, title, class) then return end
+
+    -- Если окно закончили двигать руками — пружиной возвращаем на место
+    if event_type == 0x000B then
+        local col, _ = Quire.find_window_pos(hwnd)
+        if col and not Quire.floating_windows[hwnd] then
+            local rx, ry, rw, rh = wm.get_window_rect(hwnd)
+            local curr = Quire.window_currents[hwnd]
+            if curr then
+                curr.x = rx
+                curr.y = ry
+                curr.needs_sync = true
+            end
+            Quire.retile()
+        end
+        return
+    end
 
     if event_type == 0x0003 then
         local col_idx, _, _, existing_ws = Quire.find_window_pos(hwnd)
@@ -552,6 +599,7 @@ local function draw_hud(sw, sh, dt)
 
     if hud_alpha < 0.01 then return end
 
+    local wx, wy, ww, wh = wm.get_work_area()
     local ws = get_ws(Quire.current_workspace)
     local cur_col_idx = 1
     local cur_ratio = 1.0
@@ -576,8 +624,8 @@ local function draw_hud(sw, sh, dt)
     local tw = ui.measure_text(hud_text, 11, font)
     local pw = tw + 32
     local ph = 30
-    local px = math.floor((sw - pw) / 2)
-    local py = sh - ph - 24
+    local px = wx + math.floor((ww - pw) / 2)
+    local py = wy + wh - ph - 16
 
     ui.fill_rounded_rect(px, py, pw, ph, 15, 0.04, 0.04, 0.06, 0.85 * hud_alpha)
     ui.draw_rounded_rect(px, py, pw, ph, 15, 0.54, 0.71, 0.98, 0.40 * hud_alpha, 1.0)
@@ -640,8 +688,7 @@ Quire.on_render_overlay = function()
                     curr = { 
                         x = screen_target_x, y = screen_target_y, w = target.w, h = target.h, 
                         vx = 0, vy = 0, vw = 0, vh = 0,
-                        applied_x = screen_target_x, applied_y = screen_target_y,
-                        applied_w = target.w, applied_h = target.h
+                        needs_sync = true
                     }
                     Quire.window_currents[hwnd] = curr
                     wm.move_window(hwnd, curr.x, curr.y, curr.w, curr.h)
@@ -651,16 +698,20 @@ Quire.on_render_overlay = function()
                     curr.w, curr.vw = solve_spring(curr.w, curr.vw, target.w, sp.stiffness, sp.damping, sp.mass, dt)
                     curr.h, curr.vh = solve_spring(curr.h, curr.vh, target.h, sp.stiffness, sp.damping, sp.mass, dt)
 
-                    local ix = math.floor(curr.x)
-                    local iy = math.floor(curr.y)
-                    local iw = math.floor(curr.w)
-                    local ih = math.floor(curr.h)
+                    local is_moving = (math.abs(curr.vx) > 0.2 or math.abs(curr.vy) > 0.2 or math.abs(curr.vw) > 0.2 or math.abs(curr.vh) > 0.2)
+                    local target_changed = (curr.last_tx ~= screen_target_x or curr.last_ty ~= screen_target_y or curr.last_tw ~= target.w or curr.last_th ~= target.h)
 
-                    if curr.applied_x ~= ix or curr.applied_y ~= iy or curr.applied_w ~= iw or curr.applied_h ~= ih then
-                        curr.applied_x = ix
-                        curr.applied_y = iy
-                        curr.applied_w = iw
-                        curr.applied_h = ih
+                    if is_moving or target_changed or curr.needs_sync then
+                        curr.last_tx = screen_target_x
+                        curr.last_ty = screen_target_y
+                        curr.last_tw = target.w
+                        curr.last_th = target.h
+                        curr.needs_sync = is_moving
+
+                        local ix = math.floor(curr.x)
+                        local iy = math.floor(curr.y)
+                        local iw = math.floor(curr.w)
+                        local ih = math.floor(curr.h)
 
                         if ix > -iw - 100 and ix < sw + 100 then
                             wm.move_window(hwnd, ix, iy, iw, ih)
@@ -710,9 +761,53 @@ Quire.on_alttab_action = function(action_type)
     alttab.action(action_type)
 end
 
+local function recheck_tiled_windows()
+    local ws = get_ws(Quire.current_workspace)
+    local to_float = {}
+
+    for col_idx, col in ipairs(ws.columns) do
+        for _, hwnd in ipairs(col.windows) do
+            local title = wm.get_window_title(hwnd)
+            local class = wm.get_class_name(hwnd)
+            for _, pattern in ipairs(Quire.window_rules.float) do
+                local p = pattern:lower()
+                local proc = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
+                if proc:find(p, 1, true) or (title and title:lower():find(p, 1, true)) or (class and class:lower():find(p, 1, true)) then
+                    table.insert(to_float, hwnd)
+                    break
+                end
+            end
+        end
+    end
+
+    for _, hwnd in ipairs(to_float) do
+        local col_idx, row_idx, _ = Quire.find_window_pos(hwnd)
+        if col_idx then
+            table.remove(ws.columns[col_idx].windows, row_idx)
+            if #ws.columns[col_idx].windows == 0 then
+                table.remove(ws.columns, col_idx)
+            end
+            Quire.floating_windows[hwnd] = true
+            local wx, wy, ww, wh = wm.get_work_area()
+            local fw = math.floor(ww * 0.60)
+            local fh = math.floor(wh * 0.70)
+            local fx = wx + math.floor((ww - fw) / 2)
+            local fy = wy + math.floor((wh - fh) / 2)
+            Quire.floating_rects[hwnd] = { fx, fy, fw, fh }
+            wm.move_window(hwnd, fx, fy, fw, fh)
+        end
+    end
+end
+
 Quire.reload_config = function()
     local config_path = wm.get_config_path()
-    local ok, err = pcall(dofile, config_path)
+    local fn, load_err = loadfile(config_path)
+    if not fn then
+        log("CONFIG FILE ERROR: " .. tostring(load_err))
+        return
+    end
+
+    local ok, run_err = pcall(fn)
     if ok then
         if Quire.config.border_active then
             Quire.theme.active_border_color = Quire.config.border_active
@@ -724,11 +819,12 @@ Quire.reload_config = function()
         if Quire.config.rounding then
             Quire.theme.rounding = Quire.config.rounding
         end
+        recheck_tiled_windows()
         log("Config reloaded successfully!")
         trigger_hud()
         Quire.retile()
     else
-        log("Config reload failed: " .. tostring(err))
+        log("CONFIG RUNTIME ERROR: " .. tostring(run_err))
     end
 end
 
@@ -824,6 +920,41 @@ Quire.on_hotkey = function(id)
     if Quire.hotkeys[id] then Quire.hotkeys[id]() end
 end
 
+local config_path = wm.get_config_path()
+local fn, load_err = loadfile(config_path)
+if not fn then
+    log("Config file error: " .. tostring(load_err))
+    log("Registering default Quire binds...")
+
+    Quire.bind("Alt+H", function() Quire.focus_direction("left") end)
+    Quire.bind("Alt+L", function() Quire.focus_direction("right") end)
+    Quire.bind("Alt+K", function() Quire.focus_direction("up") end)
+    Quire.bind("Alt+J", function() Quire.focus_direction("down") end)
+
+    Quire.bind("Alt+Shift+H", function() Quire.move_column("left") end)
+    Quire.bind("Alt+Shift+L", function() Quire.move_column("right") end)
+
+    Quire.bind("Alt+Q", function() if Quire.focused_window then wm.close_window(Quire.focused_window) end end)
+    Quire.bind("Alt+F", Quire.toggle_fullscreen)
+    Quire.bind("Alt+V", Quire.toggle_floating)
+    Quire.bind("Alt+D", Quire.cycle_column_preset)
+
+    Quire.bind("Alt+Space", launcher.toggle)
+    Quire.bind("Alt+Return", launcher.commit)
+
+    for i = 1, 9 do
+        Quire.bind("Alt+" .. i, function() Quire.switch_workspace(i) end)
+        Quire.bind("Alt+Shift+" .. i, function() Quire.move_to_workspace(i) end)
+    end
+else
+    local ok, run_err = pcall(fn)
+    if not ok then
+        log("CONFIG RUNTIME ERROR: " .. tostring(run_err))
+    else
+        log("Config loaded successfully on start!")
+    end
+end
+
 local existing = wm.enumerate_windows()
 local ws1 = get_ws(1)
 for _, hwnd in ipairs(existing) do
@@ -839,50 +970,9 @@ for _, hwnd in ipairs(existing) do
         end
     end
 end
+
 if #ws1.columns > 0 and #ws1.columns[1].windows > 0 then
     Quire.focused_window = ws1.columns[1].windows[1]
-end
-
-local config_path = wm.get_config_path()
-if not pcall(dofile, config_path) then
-    log("Config not found/error. Registering default Quire binds...")
-
-    Quire.bind("Alt+H", function() Quire.focus_direction("left") end)
-    Quire.bind("Alt+L", function() Quire.focus_direction("right") end)
-    Quire.bind("Alt+K", function() Quire.focus_direction("up") end)
-    Quire.bind("Alt+J", function() Quire.focus_direction("down") end)
-
-    Quire.bind("Alt+Shift+H", function() Quire.move_column("left") end)
-    Quire.bind("Alt+Shift+L", function() Quire.move_column("right") end)
-    Quire.bind("Alt+Shift+Left", function() Quire.move_column("left") end)
-    Quire.bind("Alt+Shift+Right", function() Quire.move_column("right") end)
-
-    Quire.bind("Alt+Shift+BracketLeft", function() Quire.consume_into_column("left") end)
-    Quire.bind("Alt+Shift+BracketRight", function() Quire.consume_into_column("right") end)
-    Quire.bind("Alt+Shift+U", function() Quire.consume_into_column("left") end)
-    Quire.bind("Alt+Shift+I", function() Quire.consume_into_column("right") end)
-    Quire.bind("Alt+Shift+O", Quire.eject_from_column)
-
-    Quire.bind("Alt+Shift+K", function() Quire.move_window_stack("up") end)
-    Quire.bind("Alt+Shift+J", function() Quire.move_window_stack("down") end)
-    Quire.bind("Alt+Shift+Up", function() Quire.move_window_stack("up") end)
-    Quire.bind("Alt+Shift+Down", function() Quire.move_window_stack("down") end)
-
-    Quire.bind("Alt+Q", function() if Quire.focused_window then wm.close_window(Quire.focused_window) end end)
-    Quire.bind("Alt+F", Quire.toggle_fullscreen)
-    Quire.bind("Alt+V", Quire.toggle_floating)
-
-    Quire.bind("Alt+D", Quire.cycle_column_preset)
-    Quire.bind("Alt+Minus", function() Quire.adjust_column_width(-0.05) end)
-    Quire.bind("Alt+Equal", function() Quire.adjust_column_width(0.05) end)
-
-    Quire.bind("Alt+Space", launcher.toggle)
-    Quire.bind("Alt+Return", launcher.commit)
-
-    for i = 1, 9 do
-        Quire.bind("Alt+" .. i, function() Quire.switch_workspace(i) end)
-        Quire.bind("Alt+Shift+" .. i, function() Quire.move_to_workspace(i) end)
-    end
 end
 
 Quire.retile()
