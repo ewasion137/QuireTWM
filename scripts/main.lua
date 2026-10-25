@@ -46,9 +46,15 @@ local launcher = require("launcher")
 local camera_x = 0.0
 local camera_y = 0.0
 local camera_target_x = 0.0
-local camera_target_y = 0.0
 local camera_vx = 0.0
 local camera_vy = 0.0
+
+local hud_alpha = 0.0
+local hud_timer = 0.0
+
+local function trigger_hud()
+    hud_timer = 1.4
+end
 
 local function get_ws(ws_id)
     ws_id = ws_id or Quire.current_workspace
@@ -64,6 +70,11 @@ local function solve_spring(curr, vel, target, stiffness, damping, mass, dt)
         return target, 0
     end
     dt = math.min(dt, 0.05)
+    
+    mass = math.max(0.05, mass or 1.0)
+    damping = math.max(0.1, damping or 22.0)
+    stiffness = math.max(1.0, stiffness or 160.0)
+
     local steps = 4
     local sdt = dt / steps
     for _ = 1, steps do
@@ -219,6 +230,7 @@ local function add_window(hwnd, title, class)
 
     Quire.window_ws[hwnd] = Quire.current_workspace
     Quire.focused_window = hwnd
+    trigger_hud()
     Quire.retile()
 end
 
@@ -251,6 +263,7 @@ local function remove_window(hwnd, is_destroy)
         end
     end
 
+    trigger_hud()
     Quire.retile()
 end
 
@@ -281,6 +294,7 @@ function Quire.switch_workspace(target_ws)
     camera_target_x = 0
     camera_vx = 0
 
+    trigger_hud()
     Quire.retile()
 end
 
@@ -312,6 +326,7 @@ function Quire.move_to_workspace(target_ws)
         wm.focus_window(Quire.focused_window)
     end
 
+    trigger_hud()
     Quire.retile()
 end
 
@@ -320,6 +335,7 @@ function Quire.adjust_column_width(delta)
     if not col_idx then return end
     local col = ws.columns[col_idx]
     col.width = math.max(0.20, math.min(1.0, col.width + delta))
+    trigger_hud()
     Quire.retile()
 end
 
@@ -338,10 +354,18 @@ function Quire.cycle_column_preset()
         end
     end
     col.width = next_ratio
+    trigger_hud()
     Quire.retile()
 end
 
 function Quire.focus_direction(dir)
+    if Quire.launcher_active then
+        if dir == "up" then launcher.navigate("up")
+        elseif dir == "down" then launcher.navigate("down")
+        end
+        return
+    end
+
     local col_idx, row_idx, ws, _ = Quire.find_window_pos(Quire.focused_window)
     if not col_idx then return end
 
@@ -356,6 +380,7 @@ function Quire.focus_direction(dir)
     elseif dir == "down" and row_idx < #ws.columns[col_idx].windows then
         wm.focus_window(ws.columns[col_idx].windows[row_idx + 1])
     end
+    trigger_hud()
 end
 
 function Quire.move_column(dir)
@@ -369,6 +394,7 @@ function Quire.move_column(dir)
         ws.columns[col_idx], ws.columns[col_idx + 1] = ws.columns[col_idx + 1], ws.columns[col_idx]
         Quire.retile()
     end
+    trigger_hud()
 end
 
 function Quire.consume_into_column(dir)
@@ -388,6 +414,7 @@ function Quire.consume_into_column(dir)
     end
 
     table.insert(ws.columns[target_col_idx].windows, focused)
+    trigger_hud()
     Quire.retile()
 end
 
@@ -400,6 +427,7 @@ function Quire.eject_from_column()
 
     table.remove(ws.columns[col_idx].windows, row_idx)
     table.insert(ws.columns, col_idx + 1, { width = Quire.config.default_column_width, windows = { focused } })
+    trigger_hud()
     Quire.retile()
 end
 
@@ -454,6 +482,7 @@ function Quire.toggle_floating()
         wm.move_window(focused, fx, fy, fw, fh)
         Quire.retile()
     end
+    trigger_hud()
 end
 
 function Quire.toggle_fullscreen()
@@ -465,6 +494,7 @@ function Quire.toggle_fullscreen()
     else
         Quire.fullscreen_windows[focused] = true
     end
+    trigger_hud()
     Quire.retile()
 end
 
@@ -491,8 +521,9 @@ Quire.dispatch_event = function(event_type, hwnd, title)
         return
     end
 
-    if event_type == 0x8002 or event_type == 0x0017 then
-        if not Quire.floating_windows[hwnd] and wm.is_toplevel(hwnd) then
+    if event_type == 0x8000 or event_type == 0x8002 or event_type == 0x0017 or event_type == 0x800C then
+        local col_idx, _, _, _ = Quire.find_window_pos(hwnd)
+        if not col_idx and not Quire.floating_windows[hwnd] and wm.is_toplevel(hwnd) then
             add_window(hwnd, title, class)
         end
         return
@@ -510,6 +541,48 @@ Quire.dispatch_event = function(event_type, hwnd, title)
 end
 
 local last_time = os.clock()
+
+local function draw_hud(sw, sh, dt)
+    if hud_timer > 0 then
+        hud_timer = hud_timer - dt
+        hud_alpha = math.min(1.0, hud_alpha + dt * 6.0)
+    else
+        hud_alpha = math.max(0.0, hud_alpha - dt * 3.0)
+    end
+
+    if hud_alpha < 0.01 then return end
+
+    local ws = get_ws(Quire.current_workspace)
+    local cur_col_idx = 1
+    local cur_ratio = 1.0
+
+    if Quire.focused_window then
+        local c, _, _ = Quire.find_window_pos(Quire.focused_window)
+        if c then
+            cur_col_idx = c
+            cur_ratio = ws.columns[c].width
+        end
+    end
+
+    local dots = {}
+    for i = 1, #ws.columns do
+        table.insert(dots, (i == cur_col_idx) and "[*]" or "[ ]")
+    end
+    local ribbon_str = (#dots > 0) and table.concat(dots, " ") or "EMPTY"
+    local pct_str = math.floor(cur_ratio * 100) .. "%"
+    local hud_text = string.format("WS %d  |  %s  |  %s", Quire.current_workspace, ribbon_str, pct_str)
+
+    local font = Quire.theme.font_family
+    local tw = ui.measure_text(hud_text, 11, font)
+    local pw = tw + 32
+    local ph = 30
+    local px = math.floor((sw - pw) / 2)
+    local py = sh - ph - 24
+
+    ui.fill_rounded_rect(px, py, pw, ph, 15, 0.04, 0.04, 0.06, 0.85 * hud_alpha)
+    ui.draw_rounded_rect(px, py, pw, ph, 15, 0.54, 0.71, 0.98, 0.40 * hud_alpha, 1.0)
+    ui.draw_text(hud_text, px + 16, py + 7, 11, 0.90, 0.92, 0.96, hud_alpha, font)
+end
 
 Quire.on_render_overlay = function()
     local now = os.clock()
@@ -564,7 +637,12 @@ Quire.on_render_overlay = function()
                 local curr = Quire.window_currents[hwnd]
 
                 if not curr then
-                    curr = { x = screen_target_x, y = screen_target_y, w = target.w, h = target.h, vx = 0, vy = 0, vw = 0, vh = 0 }
+                    curr = { 
+                        x = screen_target_x, y = screen_target_y, w = target.w, h = target.h, 
+                        vx = 0, vy = 0, vw = 0, vh = 0,
+                        applied_x = screen_target_x, applied_y = screen_target_y,
+                        applied_w = target.w, applied_h = target.h
+                    }
                     Quire.window_currents[hwnd] = curr
                     wm.move_window(hwnd, curr.x, curr.y, curr.w, curr.h)
                 else
@@ -573,31 +651,85 @@ Quire.on_render_overlay = function()
                     curr.w, curr.vw = solve_spring(curr.w, curr.vw, target.w, sp.stiffness, sp.damping, sp.mass, dt)
                     curr.h, curr.vh = solve_spring(curr.h, curr.vh, target.h, sp.stiffness, sp.damping, sp.mass, dt)
 
-                    if curr.x > -curr.w - 100 and curr.x < sw + 100 then
-                        wm.move_window(hwnd, curr.x, curr.y, curr.w, curr.h)
+                    local ix = math.floor(curr.x)
+                    local iy = math.floor(curr.y)
+                    local iw = math.floor(curr.w)
+                    local ih = math.floor(curr.h)
+
+                    if curr.applied_x ~= ix or curr.applied_y ~= iy or curr.applied_w ~= iw or curr.applied_h ~= ih then
+                        curr.applied_x = ix
+                        curr.applied_y = iy
+                        curr.applied_w = iw
+                        curr.applied_h = ih
+
+                        if ix > -iw - 100 and ix < sw + 100 then
+                            wm.move_window(hwnd, ix, iy, iw, ih)
+                        end
                     end
                 end
             end
         end
     end
 
-    for _, col in ipairs(ws.columns) do
-        for _, hwnd in ipairs(col.windows) do
-            local curr = Quire.window_currents[hwnd]
-            if curr and curr.x > -curr.w and curr.x < sw then
-                local is_active = (hwnd == Quire.focused_window)
-                local col_color = is_active and cfg.border_active or cfg.border_inactive
-                ui.draw_rounded_rect(curr.x, curr.y, curr.w, curr.h, cfg.rounding, col_color[1], col_color[2], col_color[3], col_color[4], cfg.border_size)
+    local fg = wm.get_foreground_window()
+    local fg_covers_screen = false
+    if fg and fg ~= 0 then
+        local fx, fy, fw, fh = wm.get_window_rect(fg)
+        if fx <= 2 and fy <= 2 and fw >= sw - 4 and fh >= sh - 4 then
+            local is_our_tiled = false
+            for _, col in ipairs(ws.columns) do
+                for _, hwnd in ipairs(col.windows) do
+                    if hwnd == fg then is_our_tiled = true break end
+                end
+            end
+            if not is_our_tiled then
+                fg_covers_screen = true
             end
         end
     end
 
+    if not fg_covers_screen then
+        for _, col in ipairs(ws.columns) do
+            for _, hwnd in ipairs(col.windows) do
+                local curr = Quire.window_currents[hwnd]
+                if curr and curr.x > -curr.w and curr.x < sw then
+                    local is_active = (hwnd == Quire.focused_window) and (fg == hwnd)
+                    local col_color = is_active and cfg.border_active or cfg.border_inactive
+                    ui.draw_rounded_rect(curr.x, curr.y, curr.w, curr.h, cfg.rounding, col_color[1], col_color[2], col_color[3], col_color[4], cfg.border_size)
+                end
+            end
+        end
+    end
+
+    draw_hud(sw, sh, dt)
     alttab.draw()
     launcher.draw(1.0)
 end
 
 Quire.on_alttab_action = function(action_type)
     alttab.action(action_type)
+end
+
+Quire.reload_config = function()
+    local config_path = wm.get_config_path()
+    local ok, err = pcall(dofile, config_path)
+    if ok then
+        if Quire.config.border_active then
+            Quire.theme.active_border_color = Quire.config.border_active
+            Quire.theme.accent_color = Quire.config.border_active
+        end
+        if Quire.config.border_inactive then
+            Quire.theme.border_color = Quire.config.border_inactive
+        end
+        if Quire.config.rounding then
+            Quire.theme.rounding = Quire.config.rounding
+        end
+        log("Config reloaded successfully!")
+        trigger_hud()
+        Quire.retile()
+    else
+        log("Config reload failed: " .. tostring(err))
+    end
 end
 
 Quire.on_ipc_request = function(req)
@@ -626,6 +758,9 @@ Quire.on_ipc_request = function(req)
         return "OK"
     elseif cmd == "preset" then
         Quire.cycle_column_preset()
+        return "OK"
+    elseif cmd == "reload" then
+        Quire.reload_config()
         return "OK"
     elseif cmd == "close" then
         if Quire.focused_window then wm.close_window(Quire.focused_window) end

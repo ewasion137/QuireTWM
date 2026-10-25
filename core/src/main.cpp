@@ -3,6 +3,9 @@
 #endif
 
 #define SOL_ALL_SAFETIES_ON 1
+#define WM_QUIRE_IPC (WM_USER + 500)
+#define WM_QUIRE_ALTTAB (WM_USER + 501)
+#define WM_QUIRE_RELOAD (WM_USER + 504)
 
 #include "../include/renderer.hpp"
 #include "../include/alttab.hpp"
@@ -36,9 +39,6 @@ std::vector<int> g_registered_hotkeys;
 
 Renderer* g_current_renderer = nullptr;
 
-#define WM_QUIRE_IPC (WM_USER + 500)
-#define WM_QUIRE_ALTTAB (WM_USER + 501)
-
 struct IPCMessage {
     const char* request;
     std::string response;
@@ -46,6 +46,13 @@ struct IPCMessage {
 
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_QUIRE_RELOAD: {
+        if (!g_lua) return 0;
+        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        sol::protected_function fn = (*g_lua)["Quire"]["reload_config"];
+        if (fn.valid()) fn();
+        return 0;
+    }
     case WM_QUIRE_ALTTAB: {
         if (!g_lua) return 0;
         std::lock_guard<std::mutex> lock(g_lua_mutex);
@@ -78,6 +85,29 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     default:
         return DefWindowProcA(hwnd, msg, wParam, lParam);
     }
+}
+
+void ConfigWatcherThread(std::string configDir) {
+    HANDLE hDir = CreateFileA(
+        configDir.c_str(), FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
+    );
+    if (hDir == INVALID_HANDLE_VALUE) return;
+
+    char buffer[1024];
+    DWORD bytesReturned;
+    while (ReadDirectoryChangesW(
+        hDir, buffer, sizeof(buffer), FALSE,
+        FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE,
+        &bytesReturned, NULL, NULL)) 
+    {
+        Sleep(150);
+        if (g_overlay_hwnd && IsWindow(g_overlay_hwnd)) {
+            PostMessageA(g_overlay_hwnd, WM_QUIRE_RELOAD, 0, 0);
+        }
+    }
+    CloseHandle(hDir);
 }
 
 void IPCServerThread() {
@@ -162,15 +192,11 @@ bool IsToplevelWindow(HWND hwnd) {
     return false;
 }
 
-// Защита: восстанавливаем окна при выходе или краше
 void RestoreAllWindows() {
     static int offset = 0;
-    int screen_w = GetSystemMetrics(SM_CXSCREEN);
-    int screen_h = GetSystemMetrics(SM_CYSCREEN);
 
     EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
         if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
-            // Возвращаем 100% прозрачность
             LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
             if (ex_style & WS_EX_LAYERED) {
                 SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
@@ -178,16 +204,15 @@ void RestoreAllWindows() {
 
             RECT rc;
             GetWindowRect(hwnd, &rc);
-            // Если окно уехало за экран дальше чем положено — возвращаем каскадом
             if (rc.left < -500 || rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
-                int* off = (int*)lParam;
+                int* off = reinterpret_cast<int*>(lParam);
                 SetWindowPos(hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1200, 700, 
                              SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                 *off = (*off + 30) % 300;
             }
         }
         return TRUE;
-    }, (LPARAM)&offset);
+    }, reinterpret_cast<LPARAM>(&offset));
 }
 
 BOOL WINAPI ConsoleHandler(DWORD ctrlType) {
@@ -224,16 +249,16 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
     }
 }
 
-std::string GetConfigPath() {
+std::string GetConfigDirectory() {
     char szPath[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, szPath))) {
         fs::path configDir = fs::path(szPath) / ".quire";
         if (!fs::exists(configDir)) {
             fs::create_directories(configDir);
         }
-        return (configDir / "config.lua").string();
+        return configDir.string();
     }
-    return "config.lua";
+    return ".";
 }
 
 int main() {
@@ -242,7 +267,8 @@ int main() {
         atexit(RestoreAllWindows);
 
         std::cout << "=== QuireTWM: Initializing ===" << std::endl;
-        std::string configPath = GetConfigPath();
+        std::string configDir = GetConfigDirectory();
+        std::string configPath = configDir + "\\config.lua";
 
         sol::state lua;
         g_lua = &lua;
@@ -258,7 +284,7 @@ int main() {
 
         wm.set_function("get_class_name", [](size_t hwnd) {
             char class_name[256] = {0};
-            GetClassNameA((HWND)hwnd, class_name, sizeof(class_name));
+            GetClassNameA(reinterpret_cast<HWND>(hwnd), class_name, sizeof(class_name));
             return std::string(class_name);
         });
 
@@ -279,12 +305,12 @@ int main() {
         });
 
         wm.set_function("close_window", [](size_t hwnd) {
-            PostMessage((HWND)hwnd, WM_CLOSE, 0, 0);
+            PostMessage(reinterpret_cast<HWND>(hwnd), WM_CLOSE, 0, 0);
         });
 
         wm.set_function("get_window_title", [](size_t hwnd) {
             char title[256] = {0};
-            GetWindowTextA((HWND)hwnd, title, sizeof(title));
+            GetWindowTextA(reinterpret_cast<HWND>(hwnd), title, sizeof(title));
             return std::string(title);
         });
 
@@ -293,7 +319,7 @@ int main() {
         });
 
         wm.set_function("get_foreground_window", []() {
-            return (size_t)GetForegroundWindow();
+            return reinterpret_cast<size_t>(GetForegroundWindow());
         });
 
         wm.set_function("spawn", [](std::string command) {
@@ -301,7 +327,7 @@ int main() {
         });
 
         wm.set_function("focus_window", [](size_t hwnd) {
-            HWND handle = (HWND)hwnd;
+            HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle)) return;
 
             if (IsIconic(handle)) ShowWindow(handle, SW_RESTORE);
@@ -386,43 +412,43 @@ int main() {
 
         wm.set_function("get_window_rect", [](size_t hwnd) {
             RECT rect = {0};
-            if (SUCCEEDED(DwmGetWindowAttribute((HWND)hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(RECT)))) {
-                return std::make_tuple((int)rect.left, (int)rect.top,
-                                       (int)(rect.right - rect.left),
-                                       (int)(rect.bottom - rect.top));
+            if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(RECT)))) {
+                return std::make_tuple(static_cast<int>(rect.left), static_cast<int>(rect.top),
+                                       static_cast<int>(rect.right - rect.left),
+                                       static_cast<int>(rect.bottom - rect.top));
             }
-            GetWindowRect((HWND)hwnd, &rect);
-            return std::make_tuple((int)rect.left, (int)rect.top,
-                                   (int)(rect.right - rect.left),
-                                   (int)(rect.bottom - rect.top));
+            GetWindowRect(reinterpret_cast<HWND>(hwnd), &rect);
+            return std::make_tuple(static_cast<int>(rect.left), static_cast<int>(rect.top),
+                                   static_cast<int>(rect.right - rect.left),
+                                   static_cast<int>(rect.bottom - rect.top));
         });
 
         wm.set_function("is_window_visible", [](size_t hwnd) {
-            if (!IsWindowVisible((HWND)hwnd)) return false;
+            if (!IsWindowVisible(reinterpret_cast<HWND>(hwnd))) return false;
             int cloaked = 0;
-            if (SUCCEEDED(DwmGetWindowAttribute((HWND)hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
+            if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
                 return false;
             }
             return true;
         });
 
         wm.set_function("is_minimized", [](size_t hwnd) {
-            return (bool)IsIconic((HWND)hwnd);
+            return static_cast<bool>(IsIconic(reinterpret_cast<HWND>(hwnd)));
         });
 
         wm.set_function("enumerate_windows", []() {
             std::vector<size_t> hwnds;
             EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-                auto list = (std::vector<size_t>*)lParam;
+                auto* list = reinterpret_cast<std::vector<size_t>*>(lParam);
                 if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
                     int cloaked = 0;
                     if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
                         return TRUE;
                     }
-                    list->push_back((size_t)hwnd);
+                    list->push_back(reinterpret_cast<size_t>(hwnd));
                 }
                 return TRUE;
-            }, (LPARAM)&hwnds);
+            }, reinterpret_cast<LPARAM>(&hwnds));
             return hwnds;
         });
 
@@ -452,7 +478,7 @@ int main() {
         });
 
         WNDCLASSEXA wc = {sizeof(WNDCLASSEXA), CS_HREDRAW | CS_VREDRAW, OverlayWndProc, 0, 0,
-                          GetModuleHandle(NULL), NULL, NULL, (HBRUSH)GetStockObject(BLACK_BRUSH),
+                          GetModuleHandle(NULL), NULL, NULL, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)),
                           NULL, "QuireOverlay", NULL};
         RegisterClassExA(&wc);
 
@@ -504,11 +530,12 @@ int main() {
 
         InitializeAltTabHook();
         std::thread(IPCServerThread).detach();
+        std::thread(ConfigWatcherThread, configDir).detach();
 
         MSG msg;
         using clock = std::chrono::steady_clock;
         auto last_frame = clock::now();
-        const std::chrono::nanoseconds frame_target(16666666); // ~60 FPS
+        const std::chrono::nanoseconds frame_target(16666666);
 
         bool running = true;
         while (running) {
@@ -550,7 +577,6 @@ int main() {
             }
         }
 
-        // Cleanup
         UnhookWinEvent(hook_objects);
         UnhookWinEvent(hook_focus);
         UnhookWinEvent(hook_minimize);
