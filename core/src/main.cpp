@@ -416,29 +416,30 @@ int main() {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (IsZoomed(handle)) ShowWindow(handle, SW_RESTORE);
 
+            // Если окно во флоате — держим его TOPMOST поверх оверлея
+            HWND insertAfter = HWND_NOTOPMOST;
+            if (g_lua) {
+                sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
+                if (is_f.valid() && is_f(hwnd).get<bool>()) {
+                    insertAfter = HWND_TOPMOST;
+                }
+            }
+
             RECT windowRect, frameRect;
             GetWindowRect(handle, &windowRect);
 
+            int lm = 0, tm = 0, rm = 0, bm = 0;
             if (SUCCEEDED(DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, &frameRect, sizeof(RECT)))) {
-                int leftMargin = frameRect.left - windowRect.left;
-                int topMargin = frameRect.top - windowRect.top;
-                int rightMargin = windowRect.right - frameRect.right;
-                int bottomMargin = windowRect.bottom - frameRect.bottom;
-
-                SetWindowPos(handle, HWND_NOTOPMOST,
-                             static_cast<int>(x) - leftMargin,
-                             static_cast<int>(y) - topMargin,
-                             static_cast<int>(w) + leftMargin + rightMargin,
-                             static_cast<int>(h) + topMargin + bottomMargin,
-                             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
-            } else {
-                SetWindowPos(handle, HWND_NOTOPMOST,
-                             static_cast<int>(x),
-                             static_cast<int>(y),
-                             static_cast<int>(w),
-                             static_cast<int>(h),
-                             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
+                lm = frameRect.left - windowRect.left;
+                tm = frameRect.top - windowRect.top;
+                rm = windowRect.right - frameRect.right;
+                bm = windowRect.bottom - frameRect.bottom;
             }
+
+            SetWindowPos(handle, insertAfter,
+                         static_cast<int>(x) - lm, static_cast<int>(y) - tm,
+                         static_cast<int>(w) + lm + rm, static_cast<int>(h) + tm + bm,
+                         SWP_NOACTIVATE | SWP_NOSENDCHANGING);
         });
 
         wm.set_function("get_screen_size", []() {
