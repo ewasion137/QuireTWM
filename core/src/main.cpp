@@ -202,7 +202,9 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
     if (event == 0x800B || event == 0x800A) return;
 
     HWND root = GetAncestor(hwnd, GA_ROOT);
-    if (root != nullptr) hwnd = root;
+    if (root != hwnd) {
+        return;
+    }
 
     bool is_removal = (event == EVENT_OBJECT_DESTROY || event == EVENT_SYSTEM_MINIMIZESTART);
 
