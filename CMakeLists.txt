@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HyprWin VERSION 0.1.0 LANGUAGES CXX C)
+project(QuireTWM VERSION 1.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,14 +27,14 @@ endif()
 
 add_subdirectory(core)
 
-add_executable(HyprWin core/src/main.cpp)
-target_include_directories(HyprWin PRIVATE third_party third_party/lua)
+add_executable(QuireTWM core/src/main.cpp)
+target_include_directories(QuireTWM PRIVATE third_party third_party/lua)
 
 if(MSVC)
-    target_compile_options(HyprWin PRIVATE /W4)
+    target_compile_options(QuireTWM PRIVATE /W4)
 endif()
 
-target_link_libraries(HyprWin PRIVATE 
+target_link_libraries(QuireTWM PRIVATE 
     core_lib 
     lua_lib 
     user32 
@@ -45,8 +45,8 @@ target_link_libraries(HyprWin PRIVATE
     shell32
 )
 
-add_custom_command(TARGET HyprWin POST_BUILD
+add_custom_command(TARGET QuireTWM POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
-    "$<TARGET_FILE_DIR:HyprWin>/scripts"
+    "$<TARGET_FILE_DIR:QuireTWM>/scripts"
 )
