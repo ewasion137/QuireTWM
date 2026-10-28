@@ -139,8 +139,6 @@ local function apply_rules(hwnd, title, class)
 
             Quire.floating_rects[hwnd] = { fx, fy, fw, fh }
             wm.move_window(hwnd, fx, fy, fw, fh)
-            -- Поднимаем флоат поверх оверлея рамок
-            SetWindowPos and SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002)
             return true
         end
     end

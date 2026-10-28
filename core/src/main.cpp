@@ -2,6 +2,10 @@
 #define NOMINMAX
 #endif
 
+#ifdef NDEBUG
+#pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+#endif
+
 #define SOL_ALL_SAFETIES_ON 1
 #define WM_QUIRE_IPC (WM_USER + 500)
 #define WM_QUIRE_ALTTAB (WM_USER + 501)

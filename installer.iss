@@ -23,6 +23,8 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=logo\Quire.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -33,15 +35,11 @@ Name: "startup"; Description: "Run QuireTWM on Windows startup"; GroupDescriptio
 Name: "addtopath"; Description: "Add QuireTWM to system PATH (enables 'quirectl' in terminal)"; GroupDescription: "Additional options:"
 
 [Files]
-; Основной бинарник и скрипты
 Source: "build\Release\QuireTWM.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "quirectl.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\Release\scripts\*"; DestDir: "{app}\scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-
-; Дефолтный конфиг (создается ТОЛЬКО если у пользователя его еще нет)
-Source: "scripts\config.lua"; DestDir: "{userprofile}\.quire"; DestName: "config.lua"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

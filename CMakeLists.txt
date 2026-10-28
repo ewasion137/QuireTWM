@@ -27,7 +27,10 @@ endif()
 
 add_subdirectory(core)
 
-add_executable(QuireTWM core/src/main.cpp)
+add_executable(QuireTWM 
+    core/src/main.cpp
+    core/src/app.rc
+)
 target_include_directories(QuireTWM PRIVATE third_party third_party/lua)
 
 if(MSVC)
