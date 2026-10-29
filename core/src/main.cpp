@@ -33,6 +33,8 @@
 #include <thread>
 #include <vector>
 #include <mutex>
+#include <timeapi.h>
+#include <chrono>
 
 extern "C" {
 #include <lauxlib.h>
@@ -385,6 +387,7 @@ std::string GetConfigDirectory() {
 
 int main() {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    timeBeginPeriod(1);
     try {
         SetConsoleCtrlHandler(ConsoleHandler, TRUE);
         atexit(RestoreAllWindows);
@@ -619,6 +622,12 @@ int main() {
             return true;
         });
 
+        static auto s_start_time = std::chrono::steady_clock::now();
+wm.set_function("get_time", []() {
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(now - s_start_time).count();
+});
+
         wm.set_function("is_minimized", [](size_t hwnd) {
             return static_cast<bool>(IsIconic(reinterpret_cast<HWND>(hwnd)));
         });
@@ -793,6 +802,6 @@ int main() {
         RestoreAllWindows();
         return 1;
     }
-
+    timeEndPeriod(1);
     return 0;
 }

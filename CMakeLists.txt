@@ -46,6 +46,7 @@ target_link_libraries(QuireTWM PRIVATE
     d2d1 
     dwrite 
     shell32
+    winmm
 )
 
 add_custom_command(TARGET QuireTWM POST_BUILD
