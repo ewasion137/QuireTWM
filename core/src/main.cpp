@@ -653,8 +653,8 @@ int main() {
         RegisterClassExA(&wc);
 
         HWND overlay_hwnd = CreateWindowExA(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED, "QuireOverlay",
-            "QuireOverlay", WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN),
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN),
             GetSystemMetrics(SM_CYSCREEN), NULL, NULL, wc.hInstance, NULL);
 
         g_overlay_hwnd = overlay_hwnd;
