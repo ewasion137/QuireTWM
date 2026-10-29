@@ -10,7 +10,7 @@ Any changes made to this file are automatically reloaded on save without requiri
 ---
 
 ## Table of Contents
-1. [Layout & Geometry](#1-layout--geometry)
+1. [Layout & Performance](#1-layout--performance)
 2. [Color Palette](#2-color-palette)
 3. [Spring Physics Engine](#3-spring-physics-engine)
 4. [Window Rules (Floating)](#4-window-rules-floating)
@@ -21,11 +21,14 @@ Any changes made to this file are automatically reloaded on save without requiri
 
 ---
 
-## 1. Layout & Geometry
+## 1. Layout & Performance
 
-Define window spacing, rounded corner radius, and ribbon dimensions:
+Define window spacing, rounded corner radius, ribbon dimensions and framerate caps:
 
 ```lua
+-- Target framerate limit (0 sets rate to match monitor Hz automatically)
+Quire.config.fps_cap = 0
+
 -- Inner gap between adjacent windows (in pixels)
 Quire.config.gaps_in = 10
 
@@ -73,7 +76,7 @@ Quire.config.spring = {
 
 ## 4. Window Rules (Floating)
 
-Specify client classes, window titles, or executable names that must bypass tiling and open as floating windows:
+Specify client classes, window titles or executable names that must bypass tiling and open as floating windows:
 
 ```lua
 -- Add application identifiers to the float rules list
@@ -100,9 +103,11 @@ Keybindings are registered using `Quire.bind(chord, callback)`.
 | `Quire.toggle_fullscreen()` | Toggle fullscreen state for active client. |
 | `Quire.switch_workspace(id)` | Switch camera viewport to workspace `id` (1 through 9). |
 | `Quire.move_to_workspace(id)` | Send focused client to workspace `id`. |
+| `Quire.save_session()` | Save current workspaces and column layouts to disk. |
+| `Quire.restore_session()` | Restore saved session layout without stacking windows. |
 | `wm.close_window(hwnd)` | Gracefully close specified window handle. |
 | `wm.spawn(executable)` | Launch an external program safely (sandboxed). |
-| `launcher.toggle()` | Open/close the quick application launcher. |
+| `launcher.toggle()` | Open or close the quick application launcher. |
 | `launcher.commit()` | Execute currently selected item in the launcher. |
 
 ### Binding Examples
@@ -122,6 +127,10 @@ Quire.bind("Alt+Shift+L", function() Quire.move_column("right") end)
 Quire.bind("Alt+D", Quire.cycle_column_preset)
 Quire.bind("Alt+V", Quire.toggle_floating)
 Quire.bind("Alt+F", Quire.toggle_fullscreen)
+
+-- Session shortcuts
+Quire.bind("Alt+Shift+S", Quire.save_session)
+Quire.bind("Alt+Shift+R", Quire.restore_session)
 
 -- Window management
 Quire.bind("Alt+Q", function()
@@ -145,7 +154,7 @@ Configure quick-launch applications accessed via `Alt+Space`:
 
 ```lua
 Quire.apps = {
-    { name = "Terminal",      path = "alacritty.exe" },
+    { name = "Terminal",      path = "cmd.exe" },
     { name = "File Explorer", path = "explorer.exe" },
     { name = "Code Editor",   path = "code.cmd" },
     { name = "Browser",       path = "firefox.exe" }
@@ -157,7 +166,7 @@ Quire.bind("Alt+Return", function()
     if Quire.launcher_active then
         launcher.commit()
     else
-        wm.spawn("alacritty.exe")
+        wm.spawn("cmd.exe")
     end
 end)
 Quire.bind("Alt+Escape", function()
@@ -191,6 +200,7 @@ end)
 -- QuireTWM Default Configuration
 -- Path: %USERPROFILE%\.quire\config.lua
 
+Quire.config.fps_cap = 0
 Quire.config.gaps_in = 8
 Quire.config.gaps_out = 14
 Quire.config.rounding = 8
@@ -226,6 +236,10 @@ Quire.bind("Alt+D", Quire.cycle_column_preset)
 Quire.bind("Alt+V", Quire.toggle_floating)
 Quire.bind("Alt+F", Quire.toggle_fullscreen)
 
+-- Session Management
+Quire.bind("Alt+Shift+S", Quire.save_session)
+Quire.bind("Alt+Shift+R", Quire.restore_session)
+
 -- Window Lifecycle
 Quire.bind("Alt+Q", function()
     if Quire.focused_window then wm.close_window(Quire.focused_window) end
@@ -242,7 +256,7 @@ Quire.bind("Alt+Return", function()
     if Quire.launcher_active then
         launcher.commit()
     else
-        wm.spawn("alacritty.exe")
+        wm.spawn("cmd.exe")
     end
 end)
 Quire.bind("Alt+Escape", function()
