@@ -233,6 +233,88 @@ function Quire.retile()
     end
 end
 
+-- ================= ДВИЖОК СОХРАНЕНИЯ СЕССИЙ =================
+local session_path = wm.get_config_path():gsub("config%.lua$", "session.lua")
+Quire.saved_session = nil
+
+function Quire.save_session()
+    local out = { "return {\n" }
+
+    for ws_id, ws in pairs(Quire.workspaces) do
+        table.insert(out, string.format("  [%d] = {\n    columns = {\n", ws_id))
+        for _, col in ipairs(ws.columns) do
+            table.insert(out, string.format("      { width = %.2f, apps = { ", col.width))
+            for _, hwnd in ipairs(col.windows) do
+                local proc = wm.get_process_name and wm.get_process_name(hwnd) or ""
+                if proc ~= "" then
+                    table.insert(out, string.format("%q, ", proc:lower()))
+                end
+            end
+            table.insert(out, "} },\n")
+        end
+        table.insert(out, "    }\n  },\n")
+    end
+    table.insert(out, "}\n")
+
+    local f = io.open(session_path, "w")
+    if f then
+        f:write(table.concat(out))
+        f:close()
+        log("Window session saved to " .. session_path)
+        trigger_hud()
+    end
+end
+
+function Quire.load_session()
+    local fn = loadfile(session_path)
+    if fn then
+        local ok, data = pcall(fn)
+        if ok and type(data) == "table" then
+            Quire.saved_session = data
+            log("Loaded saved session layout")
+        end
+    end
+end
+
+function Quire.restore_session()
+    Quire.load_session()
+    if not Quire.saved_session then return end
+
+    local existing = wm.enumerate_windows()
+    for _, hwnd in ipairs(existing) do
+        local proc = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
+        if proc ~= "" then
+            for ws_id, ws_data in pairs(Quire.saved_session) do
+                for col_idx, col_data in ipairs(ws_data.columns or {}) do
+                    for _, app_proc in ipairs(col_data.apps or {}) do
+                        if proc == app_proc then
+                            local cur_c, cur_r, cur_ws, _ = Quire.find_window_pos(hwnd)
+                            if cur_c then
+                                table.remove(cur_ws.columns[cur_c].windows, cur_r)
+                                if #cur_ws.columns[cur_c].windows == 0 then
+                                    table.remove(cur_ws.columns, cur_c)
+                                end
+                            end
+                            local target_ws = get_ws(ws_id)
+                            while #target_ws.columns < col_idx do
+                                table.insert(target_ws.columns, { width = col_data.width, windows = {} })
+                            end
+                            table.insert(target_ws.columns[col_idx].windows, hwnd)
+                            Quire.window_ws[hwnd] = ws_id
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    trigger_hud()
+    Quire.retile()
+end
+
+Quire.load_session()
+
 local function add_window(hwnd, title, class)
     if Quire.floating_windows[hwnd] then return end
     if apply_rules(hwnd, title, class) then return end
@@ -245,21 +327,49 @@ local function add_window(hwnd, title, class)
         return
     end
 
-    local ws = get_ws(Quire.current_workspace)
-    local active_col, _, _, _ = Quire.find_window_pos(Quire.focused_window)
+    local proc = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
+    local restored = false
 
-    local new_col = {
-        width = Quire.config.default_column_width,
-        windows = { hwnd }
-    }
-
-    if active_col and active_col <= #ws.columns then
-        table.insert(ws.columns, active_col + 1, new_col)
-    else
-        table.insert(ws.columns, new_col)
+    -- Если есть сохраненная сессия, сажаем окно на его прошлое место
+    if Quire.saved_session and proc ~= "" then
+        for ws_id, ws_data in pairs(Quire.saved_session) do
+            for c_idx, col_data in ipairs(ws_data.columns or {}) do
+                for _, app_proc in ipairs(col_data.apps or {}) do
+                    if proc == app_proc then
+                        local target_ws = get_ws(ws_id)
+                        while #target_ws.columns < c_idx do
+                            table.insert(target_ws.columns, { width = col_data.width, windows = {} })
+                        end
+                        table.insert(target_ws.columns[c_idx].windows, hwnd)
+                        Quire.window_ws[hwnd] = ws_id
+                        restored = true
+                        break
+                    end
+                end
+                if restored then break end
+            end
+            if restored then break end
+        end
     end
 
-    Quire.window_ws[hwnd] = Quire.current_workspace
+    if not restored then
+        local ws = get_ws(Quire.current_workspace)
+        local active_col, _, _, _ = Quire.find_window_pos(Quire.focused_window)
+
+        local new_col = {
+            width = Quire.config.default_column_width,
+            windows = { hwnd }
+        }
+
+        if active_col and active_col <= #ws.columns then
+            table.insert(ws.columns, active_col + 1, new_col)
+        else
+            table.insert(ws.columns, new_col)
+        end
+
+        Quire.window_ws[hwnd] = Quire.current_workspace
+    end
+
     Quire.focused_window = hwnd
     trigger_hud()
     Quire.retile()

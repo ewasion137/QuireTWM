@@ -15,6 +15,8 @@
 #define ID_TRAY_EXIT 1001
 #define ID_TRAY_OPEN_CONFIG 1002
 #define ID_TRAY_RELOAD_CONFIG 1003
+#define ID_TRAY_SAVE_SESSION 1005
+#define ID_TRAY_RESTORE_SESSION 1006
 #define ID_TRAY_APP_BASE 2000
 
 #include "../include/renderer.hpp"
@@ -98,6 +100,9 @@ void ShowTrayMenu(HWND hwnd) {
     AppendMenuA(hMenu, MF_STRING, ID_TRAY_OPEN_CONFIG, "Open config.lua");
     AppendMenuA(hMenu, MF_STRING, ID_TRAY_RELOAD_CONFIG, "Reload Config");
     AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_SAVE_SESSION, "Save Window Positions");
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_RESTORE_SESSION, "Restore Window Positions");
+    AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(hMenu, MF_STRING, ID_TRAY_EXIT, "Quit QuireTWM (Restore Windows)");
 
     int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
@@ -121,6 +126,18 @@ void ShowTrayMenu(HWND hwnd) {
     } else if (cmd >= ID_TRAY_APP_BASE && cmd < ID_TRAY_APP_BASE + static_cast<int>(g_tray_apps.size())) {
         size_t idx = cmd - ID_TRAY_APP_BASE;
         ShellExecuteA(NULL, "open", g_tray_apps[idx].path.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    } else if (cmd == ID_TRAY_SAVE_SESSION) {
+        if (g_lua) {
+            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            sol::protected_function fn = (*g_lua)["Quire"]["save_session"];
+            if (fn.valid()) fn();
+        }
+    } else if (cmd == ID_TRAY_RESTORE_SESSION) {
+        if (g_lua) {
+            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            sol::protected_function fn = (*g_lua)["Quire"]["restore_session"];
+            if (fn.valid()) fn();
+        }
     }
 }
 
