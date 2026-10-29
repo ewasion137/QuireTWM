@@ -535,10 +535,15 @@ int main() {
                 bm = windowRect.bottom - frameRect.bottom;
             }
 
+            UINT flags = SWP_NOACTIVATE | SWP_NOSENDCHANGING;
+            if (insertAfter == HWND_NOTOPMOST) {
+                flags |= SWP_NOZORDER;
+            }
+
             SetWindowPos(handle, insertAfter,
                          static_cast<int>(x) - lm, static_cast<int>(y) - tm,
                          static_cast<int>(w) + lm + rm, static_cast<int>(h) + tm + bm,
-                         SWP_NOACTIVATE | SWP_NOSENDCHANGING);
+                         flags);
         });
 
         wm.set_function("get_screen_size", []() {
