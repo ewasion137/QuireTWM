@@ -52,6 +52,7 @@ namespace fs = std::filesystem;
 std::vector<int> g_registered_hotkeys;
 NOTIFYICONDATAA g_nid = {};
 bool g_running = true;
+int g_target_fps = 100;
 
 Renderer* g_current_renderer = nullptr;
 
@@ -67,6 +68,28 @@ struct IPCMessage {
 };
 
 void RestoreAllWindows();
+
+int DetectMonitorRefreshRate() {
+    DEVMODEA dm = {};
+    dm.dmSize = sizeof(dm);
+    if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1) {
+        return static_cast<int>(dm.dmDisplayFrequency);
+    }
+    return 60;
+}
+
+void UpdateTargetFps() {
+    int rate = DetectMonitorRefreshRate();
+    if (g_lua) {
+        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        sol::object obj = (*g_lua)["Quire"]["config"]["fps_cap"];
+        if (obj.is<int>()) {
+            int val = obj.as<int>();
+            if (val > 0) rate = val;
+        }
+    }
+    g_target_fps = rate;
+}
 
 void ShowTrayMenu(HWND hwnd) {
     POINT pt;
@@ -156,6 +179,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         std::lock_guard<std::mutex> lock(g_lua_mutex);
         sol::protected_function fn = (*g_lua)["Quire"]["reload_config"];
         if (fn.valid()) fn();
+        UpdateTargetFps();
         return 0;
     }
     case WM_QUIRE_ALTTAB: {
@@ -402,7 +426,6 @@ int main() {
         lua.open_libraries(sol::lib::base, sol::lib::package, sol::lib::string,
                            sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::io, sol::lib::debug);
 
-        // Блокировка векторов RCE
         lua["os"]["execute"] = sol::nil;
         lua["os"]["remove"] = sol::nil;
         lua["os"]["rename"] = sol::nil;
@@ -623,10 +646,10 @@ int main() {
         });
 
         static auto s_start_time = std::chrono::steady_clock::now();
-wm.set_function("get_time", []() {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration<double>(now - s_start_time).count();
-});
+        wm.set_function("get_time", []() {
+            auto now = std::chrono::steady_clock::now();
+            return std::chrono::duration<double>(now - s_start_time).count();
+        });
 
         wm.set_function("is_minimized", [](size_t hwnd) {
             return static_cast<bool>(IsIconic(reinterpret_cast<HWND>(hwnd)));
@@ -697,7 +720,6 @@ wm.set_function("get_time", []() {
         ShowWindow(overlay_hwnd, SW_SHOW);
         SetWindowPos(overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
-        // Инициализация трея
         g_nid.cbSize = sizeof(NOTIFYICONDATAA);
         g_nid.hWnd = overlay_hwnd;
         g_nid.uID = 1;
@@ -726,6 +748,8 @@ wm.set_function("get_time", []() {
             return 1;
         }
 
+        UpdateTargetFps();
+
         HWINEVENTHOOK hook_objects = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_NAMECHANGE, NULL,
                                                     WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
         HWINEVENTHOOK hook_focus = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, NULL,
@@ -746,8 +770,7 @@ wm.set_function("get_time", []() {
 
         MSG msg;
         using clock = std::chrono::steady_clock;
-        auto last_frame = clock::now();
-        const std::chrono::nanoseconds frame_target(16666666);
+        auto next_frame = clock::now();
 
         while (g_running) {
             while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -766,12 +789,20 @@ wm.set_function("get_time", []() {
             }
             if (!g_running) break;
 
+            int fps = g_target_fps > 0 ? g_target_fps : 100;
+            auto frame_duration = std::chrono::nanoseconds(1000000000LL / fps);
+
             auto now = clock::now();
-            if (now - last_frame < frame_target) {
-                Sleep(1);
+            if (now < next_frame) {
+                auto diff = next_frame - now;
+                if (diff > std::chrono::milliseconds(2)) {
+                    Sleep(1);
+                } else {
+                    std::this_thread::yield();
+                }
                 continue;
             }
-            last_frame = now;
+            next_frame = now + frame_duration;
 
             if (IsWindowVisible(g_overlay_hwnd)) {
                 g_current_renderer = &g_renderer;

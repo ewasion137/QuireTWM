@@ -30,6 +30,7 @@ Quire.window_currents = {}
 Quire.window_rules = { float = {} }
 
 Quire.config = {
+    fps_cap = 0,
     gaps_in = 8,
     gaps_out = 14,
     default_column_width = 1.0,
@@ -437,17 +438,31 @@ function Quire.switch_workspace(target_ws)
     camera_y = direction * sh
     camera_vy = 0.0
 
+    camera_x = 0.0
+    camera_target_x = 0.0
+    camera_vx = 0.0
+
     local new_ws = get_ws(target_ws)
+    for _, col in ipairs(new_ws.columns) do
+        for _, hwnd in ipairs(col.windows) do
+            local target = Quire.window_targets[hwnd]
+            local curr = Quire.window_currents[hwnd]
+            if target and curr then
+                curr.x = target.world_x
+                curr.vx = 0.0
+                curr.y = target.y + (direction * sh)
+                curr.vy = 0.0
+                curr.needs_sync = true
+            end
+        end
+    end
+
     if #new_ws.columns > 0 and #new_ws.columns[1].windows > 0 then
         Quire.focused_window = new_ws.columns[1].windows[1]
         wm.focus_window(Quire.focused_window)
     else
         Quire.focused_window = nil
     end
-
-    camera_x = 0.0
-    camera_target_x = 0.0
-    camera_vx = 0.0
 
     trigger_hud()
     Quire.retile()
@@ -592,16 +607,18 @@ Quire.dispatch_event = function(event_type, hwnd, title)
     if should_ignore(hwnd, title, class) then return end
 
     if event_type == 0x000B then
-        local col = Quire.find_window_pos(hwnd)
-        if col and not Quire.floating_windows[hwnd] then
+        local col, _, _, ws_id = Quire.find_window_pos(hwnd)
+        if col and not Quire.floating_windows[hwnd] and ws_id == Quire.current_workspace then
             local rx, ry = wm.get_window_rect(hwnd)
-            local curr = Quire.window_currents[hwnd]
-            if curr then
-                curr.x = rx
-                curr.y = ry
-                curr.needs_sync = true
+            if rx and rx > -1000 then
+                local curr = Quire.window_currents[hwnd]
+                if curr then
+                    curr.x = rx
+                    curr.y = ry
+                    curr.needs_sync = true
+                end
+                Quire.retile()
             end
-            Quire.retile()
         end
         return
     end
