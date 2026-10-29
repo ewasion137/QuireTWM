@@ -176,11 +176,11 @@ To launch external processes safely from keybindings, use the built-in native AP
 ```lua
 -- Correct:
 Quire.bind("Alt+Return", function()
-    wm.spawn("wt.exe")
+    wm.spawn("cmd.exe")
 end)
 
 -- Incorrect (Disabled for security):
--- os.execute("start wt.exe")
+-- os.execute("start cmd.exe")
 ```
 
 ---
@@ -233,7 +233,7 @@ end)
 
 -- Launcher & App Spawning
 Quire.apps = {
-    { name = "Terminal", path = "alacritty.exe" },
+    { name = "Terminal", path = "cmd.exe" },
     { name = "Explorer", path = "explorer.exe" }
 }
 
