@@ -1,12 +1,19 @@
-# QuireTWM
 
-A scrollable ribbon tiling window manager for Windows 10 and 11. Built with C++ and Lua.
+<p align="center">
+  <img src="logo/banner.png" alt="QuireTWM" width="100%">
+</p>
+
+<h1 align="center">QuireTWM</h1>
+
+*A scrollable ribbon tiling window manager for Windows 10 and 11. Built with C++ and Lua.*
 
 Inspired by scrollable Wayland compositors like Niri, QuireTWM replaces rigid grid splits with an infinite horizontal ribbon. The screen acts as a moving camera tracking your focused column, backed by sub-stepped numerical spring physics.
 
+https://github.com/user-attachments/assets/782fd7da-b258-4ee8-b321-5c79d84c64f7
+
 ---
 
-## Highlights
+<h1 align="center">Highlights</h1>
 
 * **Scrollable Ribbon**: Windows sit in vertical columns along an unbounded horizontal axis. Focus smoothly glides the viewport.
 * **Vertical Workspaces**: Workspaces stack on the Y-axis. Switching slides the viewport vertically without window teleport glitches.
@@ -18,7 +25,7 @@ Inspired by scrollable Wayland compositors like Niri, QuireTWM replaces rigid gr
 
 ---
 
-## Architecture
+<h1 align="center">Architecture</h1>
 
 1. **Layout Engine**: Windows live in dynamic columns. Each column can host multiple vertically stacked windows. The camera tracks focused elements along the horizontal plane.
 2. **Event Pipeline**: Tracks system windows out-of-context via `SetWinEventHook` and handles keyboard shortcuts via low-level hooks. Frameless apps like Discord, VS Code and Spotify work correctly without child-window glitches.
@@ -26,7 +33,7 @@ Inspired by scrollable Wayland compositors like Niri, QuireTWM replaces rigid gr
 
 ---
 
-## Requirements
+<h1 align="center">Requirements</h1>
 
 * Windows 10 or 11 (x64)
 * Visual Studio 2022 (MSVC v143+) or C++ Build Tools
@@ -35,7 +42,7 @@ Inspired by scrollable Wayland compositors like Niri, QuireTWM replaces rigid gr
 
 ---
 
-## Quickstart
+<h1 align="center">Quick start</h1>
 
 ```cmd
 git clone https://github.com/ewasion137/QuireTWM.git
@@ -48,60 +55,14 @@ The binary and scripts will land in `build/Release/`. Launch `QuireTWM.exe` to r
 
 ---
 
-## Configuration
+<h1 align="center">Configuration</h1>
 
 Your config lives at `%USERPROFILE%\.quire\config.lua`. Changes reload automatically on save.
-
-```lua
-Quire.config.gaps_in = 8
-Quire.config.gaps_out = 14
-Quire.config.rounding = 10
-Quire.config.border_size = 2
-Quire.config.default_column_width = 1.0
-
--- Accent palette (RGBA normalized 0.0 to 1.0)
-Quire.config.border_active = { 0.54, 0.71, 0.98, 1.0 }
-Quire.config.border_inactive = { 0.19, 0.20, 0.27, 0.6 }
-
--- Physics solver parameters
-Quire.config.spring = {
-    stiffness = 160,
-    damping = 22,
-    mass = 1.0
-}
-
--- Floating rules
-table.insert(Quire.window_rules.float, "CalculatorApp")
-table.insert(Quire.window_rules.float, "TaskManagerWindow")
-
--- Navigation
-Quire.bind("Alt+H", function() Quire.focus_direction("left") end)
-Quire.bind("Alt+L", function() Quire.focus_direction("right") end)
-Quire.bind("Alt+K", function() Quire.focus_direction("up") end)
-Quire.bind("Alt+J", function() Quire.focus_direction("down") end)
-
--- Column layout
-Quire.bind("Alt+Shift+H", function() Quire.move_column("left") end)
-Quire.bind("Alt+Shift+L", function() Quire.move_column("right") end)
-Quire.bind("Alt+D", Quire.cycle_column_preset)
-
--- Window controls
-Quire.bind("Alt+Q", function()
-    if Quire.focused_window then wm.close_window(Quire.focused_window) end
-end)
-Quire.bind("Alt+V", Quire.toggle_floating)
-Quire.bind("Alt+F", Quire.toggle_fullscreen)
-
--- Workspaces
-for i = 1, 9 do
-    Quire.bind("Alt+" .. i, function() Quire.switch_workspace(i) end)
-    Quire.bind("Alt+Shift+" .. i, function() Quire.move_to_workspace(i) end)
-end
-```
+You can setup it manually or use [our site](https://ewasion137.github.io/Quire) to generate a config (Open the Config Generator tab.)
 
 ---
 
-## Keybindings Reference
+<h1 align="center">Keybinds</h1>
 
 | Shortcut | Action |
 | :--- | :--- |
@@ -118,7 +79,7 @@ end
 
 ---
 
-## IPC Interface
+<h1 align="center">IPC</h1>
 
 Send raw commands directly through the named pipe `\\.\pipe\quire`:
 
@@ -131,3 +92,6 @@ Send raw commands directly through the named pipe `\\.\pipe\quire`:
 ```
 
 Supported commands: `focus <dir>`, `move <dir>`, `preset`, `workspace <id>`, `movetoworkspace <id>`, `togglefloating`, `fullscreen`, `reload`, `close` and `clients`.
+
+<h1 align="center">Visit our site.</h1>
+<h3 align="center">https://ewasion137.github.io/Quire</h3>
