@@ -10,6 +10,12 @@
 #define WM_QUIRE_IPC (WM_USER + 500)
 #define WM_QUIRE_ALTTAB (WM_USER + 501)
 #define WM_QUIRE_RELOAD (WM_USER + 504)
+#define WM_QUIRE_TRAY (WM_USER + 505)
+
+#define ID_TRAY_EXIT 1001
+#define ID_TRAY_OPEN_CONFIG 1002
+#define ID_TRAY_RELOAD_CONFIG 1003
+#define ID_TRAY_APP_BASE 2000
 
 #include "../include/renderer.hpp"
 #include "../include/alttab.hpp"
@@ -40,16 +46,92 @@ Renderer g_renderer;
 HWND g_overlay_hwnd = NULL;
 namespace fs = std::filesystem;
 std::vector<int> g_registered_hotkeys;
+NOTIFYICONDATAA g_nid = {};
+bool g_running = true;
 
 Renderer* g_current_renderer = nullptr;
+
+struct AppMenuItem {
+    std::string name;
+    std::string path;
+};
+std::vector<AppMenuItem> g_tray_apps;
 
 struct IPCMessage {
     const char* request;
     std::string response;
 };
 
+void RestoreAllWindows();
+
+void ShowTrayMenu(HWND hwnd) {
+    POINT pt;
+    GetCursorPos(&pt);
+    SetForegroundWindow(hwnd);
+
+    HMENU hMenu = CreatePopupMenu();
+    HMENU hSubMenu = CreatePopupMenu();
+
+    g_tray_apps.clear();
+    if (g_lua) {
+        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        sol::table apps = (*g_lua)["Quire"]["apps"];
+        if (apps.valid()) {
+            for (size_t i = 1; i <= apps.size(); ++i) {
+                sol::table app = apps[i];
+                if (app.valid()) {
+                    std::string name = app["name"].get_or(std::string("Application"));
+                    std::string path = app["path"].get_or(std::string(""));
+                    g_tray_apps.push_back({name, path});
+                    AppendMenuA(hSubMenu, MF_STRING, ID_TRAY_APP_BASE + i - 1, name.c_str());
+                }
+            }
+        }
+    }
+
+    if (g_tray_apps.empty()) {
+        AppendMenuA(hSubMenu, MF_GRAYED, 0, "No apps configured");
+    }
+
+    AppendMenuA(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hSubMenu), "Launcher");
+    AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_OPEN_CONFIG, "Open config.lua");
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_RELOAD_CONFIG, "Reload Config");
+    AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_EXIT, "Quit QuireTWM (Restore Windows)");
+
+    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
+    PostMessageA(hwnd, WM_NULL, 0, 0);
+
+    DestroyMenu(hSubMenu);
+    DestroyMenu(hMenu);
+
+    if (cmd == ID_TRAY_EXIT) {
+        RestoreAllWindows();
+        g_running = false;
+        PostQuitMessage(0);
+    } else if (cmd == ID_TRAY_OPEN_CONFIG) {
+        char szPath[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, szPath))) {
+            std::string cfg = std::string(szPath) + "\\.quire\\config.lua";
+            ShellExecuteA(NULL, "open", cfg.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        }
+    } else if (cmd == ID_TRAY_RELOAD_CONFIG) {
+        PostMessageA(hwnd, WM_QUIRE_RELOAD, 0, 0);
+    } else if (cmd >= ID_TRAY_APP_BASE && cmd < ID_TRAY_APP_BASE + static_cast<int>(g_tray_apps.size())) {
+        size_t idx = cmd - ID_TRAY_APP_BASE;
+        ShellExecuteA(NULL, "open", g_tray_apps[idx].path.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    }
+}
+
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_QUIRE_TRAY: {
+        if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP) {
+            ShowTrayMenu(hwnd);
+        }
+        return 0;
+    }
     case WM_QUIRE_RELOAD: {
         if (!g_lua) return 0;
         std::lock_guard<std::mutex> lock(g_lua_mutex);
@@ -115,7 +197,7 @@ void ConfigWatcherThread(std::string configDir) {
 }
 
 void IPCServerThread() {
-    while (true) {
+    while (g_running) {
         HANDLE hPipe = CreateNamedPipeA(
             "\\\\.\\pipe\\quire",
             PIPE_ACCESS_DUPLEX,
@@ -208,11 +290,15 @@ void RestoreAllWindows() {
 
             RECT rc;
             GetWindowRect(hwnd, &rc);
+            int* off = reinterpret_cast<int*>(lParam);
+
             if (rc.left < -500 || rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
-                int* off = reinterpret_cast<int*>(lParam);
-                SetWindowPos(hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1200, 700, 
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700, 
                              SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                 *off = (*off + 30) % 300;
+            } else {
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
             }
         }
         return TRUE;
@@ -233,10 +319,9 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
     HWND root = GetAncestor(hwnd, GA_ROOT);
     if (root != hwnd) return;
 
-    // Блокировка перетаскивания окна руками (только для затайленых окон!)
     if (event == EVENT_SYSTEM_MOVESIZESTART) {
         LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
-        if (ex_style & WS_EX_TOPMOST) return; // PiP и оверлеи никогда не трогаем
+        if (ex_style & WS_EX_TOPMOST) return;
 
         if (g_lua) {
             std::lock_guard<std::mutex> lock(g_lua_mutex);
@@ -295,6 +380,14 @@ int main() {
 
         lua.open_libraries(sol::lib::base, sol::lib::package, sol::lib::string,
                            sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::io, sol::lib::debug);
+
+        // Блокировка векторов RCE
+        lua["os"]["execute"] = sol::nil;
+        lua["os"]["remove"] = sol::nil;
+        lua["os"]["rename"] = sol::nil;
+        lua["os"]["tmpname"] = sol::nil;
+        lua["io"]["popen"] = sol::nil;
+        lua["package"]["loadlib"] = sol::nil;
 
         lua.set_function("log", [](std::string message) {
             std::cout << "[Quire]: " << message << std::endl;
@@ -420,12 +513,14 @@ int main() {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (IsZoomed(handle)) ShowWindow(handle, SW_RESTORE);
 
-            // Если окно во флоате — держим его TOPMOST поверх оверлея
             HWND insertAfter = HWND_NOTOPMOST;
             if (g_lua) {
                 sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
-                if (is_f.valid() && is_f(hwnd).get<bool>()) {
-                    insertAfter = HWND_TOPMOST;
+                if (is_f.valid()) {
+                    auto res = is_f(hwnd);
+                    if (res.valid() && res.get<bool>()) {
+                        insertAfter = HWND_TOPMOST;
+                    }
                 }
             }
 
@@ -570,6 +665,20 @@ int main() {
         ShowWindow(overlay_hwnd, SW_SHOW);
         SetWindowPos(overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
+        // Инициализация трея
+        g_nid.cbSize = sizeof(NOTIFYICONDATAA);
+        g_nid.hWnd = overlay_hwnd;
+        g_nid.uID = 1;
+        g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        g_nid.uCallbackMessage = WM_QUIRE_TRAY;
+        g_nid.hIcon = reinterpret_cast<HICON>(LoadImageA(GetModuleHandle(NULL), MAKEINTRESOURCEA(1), IMAGE_ICON, 
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+        if (!g_nid.hIcon) {
+            g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        }
+        strcpy_s(g_nid.szTip, "QuireTWM");
+        Shell_NotifyIconA(NIM_ADD, &g_nid);
+
         char buffer[MAX_PATH];
         GetModuleFileNameA(NULL, buffer, MAX_PATH);
         std::string path(buffer);
@@ -608,11 +717,10 @@ int main() {
         auto last_frame = clock::now();
         const std::chrono::nanoseconds frame_target(16666666);
 
-        bool running = true;
-        while (running) {
+        while (g_running) {
             while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
                 if (msg.message == WM_QUIT) {
-                    running = false;
+                    g_running = false;
                     break;
                 }
 
@@ -624,7 +732,7 @@ int main() {
                 TranslateMessage(&msg);
                 DispatchMessageA(&msg);
             }
-            if (!running) break;
+            if (!g_running) break;
 
             auto now = clock::now();
             if (now - last_frame < frame_target) {
@@ -648,6 +756,7 @@ int main() {
             }
         }
 
+        Shell_NotifyIconA(NIM_DELETE, &g_nid);
         UnhookWinEvent(hook_objects);
         UnhookWinEvent(hook_focus);
         UnhookWinEvent(hook_minimize);
@@ -657,6 +766,7 @@ int main() {
 
     } catch (const std::exception& e) {
         std::cerr << "FATAL: " << e.what() << std::endl;
+        Shell_NotifyIconA(NIM_DELETE, &g_nid);
         RestoreAllWindows();
         return 1;
     }
