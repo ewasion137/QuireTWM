@@ -1,34 +1,20 @@
-local M = {}
+local anims = {}
 
-local pi = math.pi
-local sin = math.sin
-local cos = math.cos
-local exp = math.exp
-local abs = math.abs
-
-local function clamp(v, min_v, max_v)
-    if v < min_v then return min_v end
-    if v > max_v then return max_v end
-    return v
-end
-
-M.easings = {
+anims.easings = {
     linear = function(t)
-        return clamp(t, 0.0, 1.0)
+        return t
     end,
 
     ease_in = function(t)
-        t = clamp(t, 0.0, 1.0)
         return t * t * t
     end,
 
     ease_out = function(t)
-        t = clamp(t, 0.0, 1.0) - 1.0
-        return t * t * t + 1.0
+        local inv = 1.0 - t
+        return 1.0 - inv * inv * inv
     end,
 
     ease_in_out = function(t)
-        t = clamp(t, 0.0, 1.0)
         if t < 0.5 then
             return 4.0 * t * t * t
         else
@@ -37,31 +23,16 @@ M.easings = {
         end
     end,
 
-    anticipation = function(t)
-        t = clamp(t, 0.0, 1.0)
-        local c = 2.70158
-        return (c + 1.0) * t * t * t - c * t * t
-    end,
-
-    back_out = function(t)
-        t = clamp(t, 0.0, 1.0) - 1.0
-        local c = 1.70158
-        return t * t * ((c + 1.0) * t + c) + 1.0
-    end,
-
-    elastic = function(t)
-        t = clamp(t, 0.0, 1.0)
-        if t == 0.0 or t == 1.0 then return t end
-        local p = 0.3
-        local s = p / 4.0
-        return (2.0 ^ (-10.0 * t)) * sin((t - s) * (2.0 * pi) / p) + 1.0
+    back = function(t)
+        local c1 = 1.70158
+        local c3 = c1 + 1.0
+        local inv = t - 1.0
+        return 1.0 + c3 * inv * inv * inv + c1 * inv * inv
     end,
 
     bounce = function(t)
-        t = clamp(t, 0.0, 1.0)
         local n1 = 7.5625
         local d1 = 2.75
-
         if t < (1.0 / d1) then
             return n1 * t * t
         elseif t < (2.0 / d1) then
@@ -74,36 +45,92 @@ M.easings = {
             t = t - (2.625 / d1)
             return n1 * t * t + 0.984375
         end
+    end,
+
+    elastic = function(t)
+        if t == 0.0 then return 0.0 end
+        if t == 1.0 then return 1.0 end
+        return math.pow(2.0, -10.0 * t) * math.sin((t * 10.0 - 0.75) * ((2.0 * math.pi) / 3.0)) + 1.0
     end
 }
 
-M.idle = {
-    pulse = function(time, speed)
-        return (sin(time * (speed or 3.0)) + 1.0) * 0.5
+anims.idle = {
+    pulse = function(time, base_color)
+        local wave = (math.sin(time * 3.5) + 1.0) * 0.5
+        local alpha = base_color[4] * (0.65 + wave * 0.35)
+        return { base_color[1], base_color[2], base_color[3], alpha }, 0, 0
     end,
 
-    heartbeat = function(time, speed)
-        local val = sin(time * (speed or 4.0))
-        return (val > 0.0) and (val ^ 4.0) or 0.0
+    shake = function(time, base_color)
+        local ox = math.sin(time * 30.0) * 1.5
+        local oy = math.cos(time * 26.0) * 1.5
+        return base_color, math.floor(ox), math.floor(oy)
     end,
 
-    wobble = function(time, speed, amplitude)
-        return sin(time * (speed or 5.0)) * (amplitude or 3.0)
+    flash = function(time, base_color)
+        local burst = math.sin(time * 6.0)
+        local boost = (burst > 0.7) and 0.3 or 0.0
+        local r = math.min(1.0, base_color[1] + boost)
+        local g = math.min(1.0, base_color[2] + boost)
+        local b = math.min(1.0, base_color[3] + boost)
+        return { r, g, b, base_color[4] }, 0, 0
     end,
 
-    shake = function(time, speed, amplitude)
-        local s = sin(time * (speed or 25.0))
-        local c = cos(time * (speed or 25.0) * 1.3)
-        return s * (amplitude or 2.0), c * (amplitude or 2.0)
+    heartbeat = function(time, base_color)
+        local cycle = time % 1.2
+        local scale = 0.0
+        if cycle < 0.15 then
+            scale = math.sin((cycle / 0.15) * math.pi) * 0.4
+        elseif cycle > 0.22 and cycle < 0.37 then
+            scale = math.sin(((cycle - 0.22) / 0.15) * math.pi) * 0.2
+        end
+        local alpha = math.min(1.0, base_color[4] + scale)
+        return { base_color[1], base_color[2], base_color[3], alpha }, 0, 0
     end,
 
-    flash = function(time, speed)
-        return (sin(time * (speed or 8.0)) > 0.2) and 1.0 or 0.0
-    end,
-
-    swing = function(time, speed, amplitude)
-        return sin(time * (speed or 2.5)) * (amplitude or 4.0)
+    wobble = function(time, base_color)
+        local ox = math.sin(time * 4.0) * 2.0
+        local oy = math.cos(time * 3.0) * 1.5
+        return base_color, math.floor(ox), math.floor(oy)
     end
 }
 
-return M
+function anims.compute_alt_tab_zoom(x, y, w, h, factor, sw, sh)
+    local cx = sw * 0.5
+    local cy = sh * 0.5
+    local win_cx = x + (w * 0.5)
+    local win_cy = y + (h * 0.5)
+
+    local target_w = math.floor(w * factor)
+    local target_h = math.floor(h * factor)
+    local target_cx = cx + (win_cx - cx) * factor
+    local target_cy = cy + (win_cy - cy) * factor
+
+    return math.floor(target_cx - target_w * 0.5),
+           math.floor(target_cy - target_h * 0.5),
+           target_w,
+           target_h
+end
+
+function anims.calc_close_geometry(mode, progress, x, y, w, h, sh)
+    local alpha = 1.0 - progress
+
+    if mode == "slide" then
+        return x, y + math.floor(progress * progress * (sh - y)), w, h, alpha
+    elseif mode == "scale" or mode == "zoom" then
+        local sf = 1.0 - progress
+        local nw = math.floor(w * sf)
+        local nh = math.floor(h * sf)
+        local nx = x + math.floor((w - nw) * 0.5)
+        local ny = y + math.floor((h - nh) * 0.5)
+        return nx, ny, nw, nh, alpha
+    elseif mode == "fold" or mode == "curtain" then
+        local nw = math.floor(w * (1.0 - progress))
+        local nx = x + math.floor((w - nw) * 0.5)
+        return nx, y, nw, h, alpha
+    end
+
+    return x, y, w, h, alpha
+end
+
+return anims
