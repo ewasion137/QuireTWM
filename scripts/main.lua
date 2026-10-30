@@ -1005,6 +1005,18 @@ Quire.reload_config = function()
     end
 end
 
+Quire.on_trackpad_scroll = function(delta)
+    local wx, wy, ww, wh = wm.get_work_area()
+    local cfg = Quire.config
+    local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
+    local max_cam_x = math.max(0, total_w - cfg.gaps_in + cfg.gaps_out - ww)
+
+    camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (delta * 1.5)))
+    for _, c in pairs(Quire.window_currents) do
+        c.needs_sync = true
+    end
+end
+
 Quire.on_ipc_request = function(req)
     if not req or req == "" then
         return "ERROR: Empty command"

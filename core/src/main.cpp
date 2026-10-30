@@ -216,6 +216,22 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 }
 
+static HHOOK g_mouse_hook = nullptr;
+
+static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && g_lua) {
+        auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
+        if (wParam == WM_MOUSEHWHEEL) {
+            short delta = HIWORD(ms->mouseData);
+            float scroll_amount = static_cast<float>(delta);
+            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
+            if (fn.valid()) fn(scroll_amount);
+        }
+    }
+    return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
+}
+
 void ConfigWatcherThread(std::string configDir) {
     HANDLE hDir = CreateFileA(
         configDir.c_str(), FILE_LIST_DIRECTORY,
@@ -754,7 +770,8 @@ int main() {
             WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN),
             GetSystemMetrics(SM_CYSCREEN), NULL, NULL, wc.hInstance, NULL);
-
+            
+        g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc, GetModuleHandleA(NULL), 0);
         g_overlay_hwnd = overlay_hwnd;
         SetLayeredWindowAttributes(overlay_hwnd, 0, 255, LWA_ALPHA);
 
@@ -873,6 +890,7 @@ int main() {
         UnhookWinEvent(hook_focus);
         UnhookWinEvent(hook_minimize);
         UnhookWinEvent(hook_movesize);
+        if (g_mouse_hook) UnhookWindowsHookEx(g_mouse_hook);
         CleanupAltTabHook();
         RestoreAllWindows();
 
