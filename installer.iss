@@ -1,5 +1,5 @@
 #define MyAppName "QuireTWM"
-#define MyAppVersion "0.1.1"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "ewasion137"
 #define MyAppURL "https://github.com/ewasion137/QuireTWM"
 #define MyAppExeName "QuireTWM.exe"

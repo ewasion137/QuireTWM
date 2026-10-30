@@ -69,9 +69,13 @@ function alttab.action(action_type)
 end
 
 function alttab.draw()
-    if not Quire.alttab_active then return end
+    if not Quire.alttab_active then
+        return
+    end
     local count = #Quire.alttab_windows
-    if count == 0 then return end
+    if count == 0 then
+        return
+    end
 
     local sw, sh = wm.get_screen_size()
     local t = Quire.theme
@@ -95,12 +99,16 @@ function alttab.draw()
             local is_sel = (i == Quire.alttab_index)
 
             if is_sel then
-                ui.fill_rounded_rect(cx - 4, cy - 4, card_w + 8, card_h + 8, t.rounding + 2, accent[1], accent[2], accent[3], 0.20)
-                ui.fill_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.bg_color[1], t.bg_color[2], t.bg_color[3], 0.95)
+                ui.fill_rounded_rect(cx - 4, cy - 4, card_w + 8, card_h + 8, t.rounding + 2, accent[1], accent[2],
+                    accent[3], 0.20)
+                ui.fill_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.bg_color[1], t.bg_color[2], t.bg_color[3],
+                    0.95)
                 ui.draw_rounded_rect(cx, cy, card_w, card_h, t.rounding, accent[1], accent[2], accent[3], 1.0, 2)
             else
-                ui.fill_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.bg_color[1], t.bg_color[2], t.bg_color[3], 0.75)
-                ui.draw_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.border_color[1], t.border_color[2], t.border_color[3], 0.4, 1)
+                ui.fill_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.bg_color[1], t.bg_color[2], t.bg_color[3],
+                    0.75)
+                ui.draw_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.border_color[1], t.border_color[2],
+                    t.border_color[3], 0.4, 1)
             end
 
             local raw_title = wm.get_window_title(hwnd)

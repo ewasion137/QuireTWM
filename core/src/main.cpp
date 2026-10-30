@@ -579,15 +579,64 @@ int main() {
                 bm = windowRect.bottom - frameRect.bottom;
             }
 
-            UINT flags = SWP_NOACTIVATE | SWP_NOSENDCHANGING;
+            UINT flags = SWP_NOACTIVATE;
             if (insertAfter == HWND_NOTOPMOST) {
                 flags |= SWP_NOZORDER;
             }
 
-            SetWindowPos(handle, insertAfter,
-                         static_cast<int>(x) - lm, static_cast<int>(y) - tm,
-                         static_cast<int>(w) + lm + rm, static_cast<int>(h) + tm + bm,
-                         flags);
+            int final_x = static_cast<int>(x) - lm;
+            int final_y = static_cast<int>(y) - tm;
+            int final_w = static_cast<int>(w) + lm + rm;
+            int final_h = static_cast<int>(h) + tm + bm;
+
+            SetWindowPos(handle, insertAfter, final_x, final_y, final_w, final_h, flags);
+
+            if (final_x > -1000) {
+                RedrawWindow(handle, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
+            }
+        });
+
+        wm.set_function("move_to_monitor", [](size_t hwnd_val, int dir) {
+            HWND hwnd = reinterpret_cast<HWND>(hwnd_val);
+            if (!IsWindow(hwnd)) return;
+
+            struct MonData {
+                HMONITOR handle;
+                RECT rc;
+            };
+            std::vector<MonData> mons;
+
+            EnumDisplayMonitors(NULL, NULL, [](HMONITOR hMon, HDC, LPRECT, LPARAM lp) -> BOOL {
+                auto* list = reinterpret_cast<std::vector<MonData>*>(lp);
+                MONITORINFO mi = { sizeof(MONITORINFO) };
+                if (GetMonitorInfoA(hMon, &mi)) {
+                    list->push_back({ hMon, mi.rcWork });
+                }
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&mons));
+
+            if (mons.size() <= 1) return;
+
+            HMONITOR currentMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            int currentIdx = 0;
+            for (size_t i = 0; i < mons.size(); ++i) {
+                if (mons[i].handle == currentMon) {
+                    currentIdx = static_cast<int>(i);
+                    break;
+                }
+            }
+
+            int targetIdx = (currentIdx + dir + static_cast<int>(mons.size())) % static_cast<int>(mons.size());
+            RECT src = mons[currentIdx].rc;
+            RECT dst = mons[targetIdx].rc;
+
+            RECT wnd;
+            GetWindowRect(hwnd, &wnd);
+            int rel_x = wnd.left - src.left;
+            int rel_y = wnd.top - src.top;
+
+            SetWindowPos(hwnd, HWND_NOTOPMOST, dst.left + rel_x, dst.top + rel_y, 0, 0,
+                         SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
         });
 
         wm.set_function("get_screen_size", []() {
