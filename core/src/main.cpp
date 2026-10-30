@@ -45,7 +45,7 @@ extern "C" {
 #include <sol/sol.hpp>
 
 sol::state* g_lua = nullptr;
-std::mutex g_lua_mutex;
+std::recursive_mutex g_lua_mutex;
 Renderer g_renderer;
 HWND g_overlay_hwnd = NULL;
 namespace fs = std::filesystem;
@@ -81,7 +81,7 @@ int DetectMonitorRefreshRate() {
 void UpdateTargetFps() {
     int rate = DetectMonitorRefreshRate();
     if (g_lua) {
-        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::object obj = (*g_lua)["Quire"]["config"]["fps_cap"];
         if (obj.is<int>()) {
             int val = obj.as<int>();
@@ -101,7 +101,7 @@ void ShowTrayMenu(HWND hwnd) {
 
     g_tray_apps.clear();
     if (g_lua) {
-        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::table apps = (*g_lua)["Quire"]["apps"];
         if (apps.valid()) {
             for (size_t i = 1; i <= apps.size(); ++i) {
@@ -153,13 +153,13 @@ void ShowTrayMenu(HWND hwnd) {
         ShellExecuteA(NULL, "open", g_tray_apps[idx].path.c_str(), NULL, NULL, SW_SHOWNORMAL);
     } else if (cmd == ID_TRAY_SAVE_SESSION) {
         if (g_lua) {
-            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["save_session"];
             if (fn.valid()) fn();
         }
     } else if (cmd == ID_TRAY_RESTORE_SESSION) {
         if (g_lua) {
-            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["restore_session"];
             if (fn.valid()) fn();
         }
@@ -176,7 +176,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
     case WM_QUIRE_RELOAD: {
         if (!g_lua) return 0;
-        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::protected_function fn = (*g_lua)["Quire"]["reload_config"];
         if (fn.valid()) fn();
         UpdateTargetFps();
@@ -184,7 +184,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
     case WM_QUIRE_ALTTAB: {
         if (!g_lua) return 0;
-        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::protected_function fn = (*g_lua)["Quire"]["on_alttab_action"];
         if (fn.valid()) {
             const char* act = (wParam == 3) ? "cancel" : ((wParam == 2) ? "commit" : ((wParam == 1) ? "prev" : "next"));
@@ -195,7 +195,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_QUIRE_IPC: {
         auto* ipcm = reinterpret_cast<IPCMessage*>(lParam);
         if (ipcm && g_lua) {
-            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["on_ipc_request"];
             if (fn.valid()) {
                 auto res = fn(ipcm->request);
@@ -224,7 +224,7 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (wParam == WM_MOUSEHWHEEL) {
             short delta = HIWORD(ms->mouseData);
             float scroll_amount = static_cast<float>(delta);
-            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
             if (fn.valid()) fn(scroll_amount);
         }
@@ -383,7 +383,7 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
         if (ex_style & WS_EX_TOPMOST) return;
 
         if (g_lua) {
-            std::lock_guard<std::mutex> lock(g_lua_mutex);
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function is_tiled = (*g_lua)["Quire"]["is_tiled"];
             if (is_tiled.valid()) {
                 auto res = is_tiled(reinterpret_cast<size_t>(hwnd));
@@ -405,7 +405,7 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
         char title[256] = {0};
         GetWindowTextA(hwnd, title, sizeof(title));
 
-        std::lock_guard<std::mutex> lock(g_lua_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::protected_function dispatcher = (*g_lua)["Quire"]["dispatch_event"];
         if (dispatcher.valid()) {
             dispatcher(event, reinterpret_cast<size_t>(hwnd), std::string(title));
@@ -846,7 +846,7 @@ int main() {
                 }
 
                 if (msg.message == WM_HOTKEY && g_lua) {
-                    std::lock_guard<std::mutex> lock(g_lua_mutex);
+                    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                     sol::protected_function on_hotkey = (*g_lua)["Quire"]["on_hotkey"];
                     if (on_hotkey.valid()) on_hotkey(static_cast<int>(msg.wParam));
                 }
@@ -876,7 +876,7 @@ int main() {
                 g_renderer.clear(0, 0, 0, 0);
 
                 if (g_lua) {
-                    std::lock_guard<std::mutex> lock(g_lua_mutex);
+                    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                     sol::protected_function render = (*g_lua)["Quire"]["on_render_overlay"];
                     if (render.valid()) render();
                 }

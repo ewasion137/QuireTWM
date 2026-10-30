@@ -20,7 +20,8 @@ Also the CONFIG GENERATOR is here: https://ewasion137.github.io/Quire
 6. [Keybindings & API](#6-keybindings--api)
 7. [Multi-Monitor Support](#7-multi-monitor-support)
 8. [Built-in Launcher](#8-built-in-launcher)
-9. [Complete Example `config.lua`](#9-complete-example-configlua)
+9. [Animation Settings](#9-animation-settings)
+10. [Complete Example `config.lua`](#10-complete-example-configlua)
 
 ---
 
@@ -161,7 +162,27 @@ end)
 
 ---
 
-## 9. Complete Example `config.lua`
+## 9. Animation Settings
+
+Configure animation behaviors, idle border pulse effects and exit styles:
+
+```lua
+-- Idle border effects: "pulse", "heartbeat", "shake", "flash", "wobble" or "none"
+Quire.config.idle_mode = "pulse"
+
+-- Window close effects: "scale", "slide", "fold" or "curtain"
+Quire.config.close_anim = "scale"
+
+-- Transition easing curve: "back", "elastic", "bounce", "ease_in_out" or "linear"
+Quire.config.move_easing = "back"
+
+Alt-Tab Overview Zoom
+
+Holding Alt-Tab automatically scales the active workspace layout down to 72% towards the screen center, giving you a Mission-Control style overview of adjacent ribbon columns while switching windows.
+
+---
+
+## 10. Complete Example `config.lua`
 
 ```lua
 -- QuireTWM Configuration
@@ -182,6 +203,10 @@ Quire.config.spring = {
     damping = 22,
     mass = 1.0
 }
+
+Quire.config.idle_mode = "heartbeat"
+Quire.config.close_anim = "scale"
+Quire.config.move_easing = "elastic"
 
 table.insert(Quire.window_rules.float, "CalculatorApp")
 table.insert(Quire.window_rules.float, "TaskManagerWindow")
