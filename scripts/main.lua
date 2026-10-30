@@ -573,14 +573,26 @@ end
 
 function Quire.move_window_to_monitor(dir)
     local focused = Quire.focused_window
-    if not focused then
-        return
+    if not focused then return end
+
+    local col_idx, row_idx, ws = Quire.find_window_pos(focused)
+    if col_idx then
+        table.remove(ws.columns[col_idx].windows, row_idx)
+        if #ws.columns[col_idx].windows == 0 then
+            table.remove(ws.columns, col_idx)
+        end
+        Quire.retile()
     end
+
+    Quire.floating_windows[focused] = true
+    Quire.window_targets[focused] = nil
+    Quire.window_currents[focused] = nil
+
     local step = (dir == "left") and -1 or 1
     wm.move_to_monitor(focused, step)
-    if not Quire.floating_windows[focused] then
-        Quire.toggle_floating()
-    end
+
+    local rx, ry, rw, rh = wm.get_window_rect(focused)
+    Quire.floating_rects[focused] = { rx, ry, rw, rh }
 end
 
 function Quire.focus_direction(dir)
