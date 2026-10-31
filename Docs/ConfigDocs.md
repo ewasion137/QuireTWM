@@ -13,7 +13,7 @@ Also the CONFIG GENERATOR is here: https://ewasion137.github.io/Quire
 
 ## Table of Contents
 1. [Layout & Performance](#1-layout--performance)
-2. [Color Palette](#2-color-palette)
+2. [Color Palette & Theme](#2-color-palette--theme)
 3. [Spring Physics Engine](#3-spring-physics-engine)
 4. [Touchpad Gestures](#4-touchpad-gestures)
 5. [Window Rules (Floating)](#5-window-rules-floating)
@@ -51,14 +51,22 @@ Quire.config.default_column_width = 1.0
 
 ---
 
-## 2. Color Palette
+## 2. Color Palette & Theme
 
-Window borders and HUD elements are rendered via Direct2D.  
+Window borders, HUD elements and the launcher are rendered via Direct2D.  
 Colors use normalized RGBA tables with float values from `0.0` to `1.0`:
 
 ```lua
+-- Border colors
 Quire.config.border_active   = { 0.54, 0.71, 0.98, 1.0 }
 Quire.config.border_inactive = { 0.19, 0.20, 0.27, 0.6 }
+
+-- Theme styling for launcher and HUD
+Quire.theme.font_family         = "Segoe UI Variable"
+Quire.theme.bg_color            = { 0.05, 0.05, 0.08, 0.92 }
+Quire.theme.accent_color        = { 0.54, 0.71, 0.98, 1.00 }
+Quire.theme.text_color          = { 0.90, 0.90, 0.95, 1.00 }
+Quire.theme.text_dim            = { 0.55, 0.55, 0.65, 0.80 }
 ```
 
 ---
@@ -174,10 +182,11 @@ Quire.config.idle_mode = "pulse"
 -- Window close effects: "scale", "slide", "fold" or "curtain"
 Quire.config.close_anim = "scale"
 
--- Transition easing curve: "back", "elastic", "bounce", "ease_in_out" or "linear"
-Quire.config.move_easing = "back"
+-- Transition easing curve: "back", "elastic", "bounce", "ease_in_out", "ease_in", "ease_out" or "linear"
+Quire.config.move_easing = "elastic"
+```
 
-Alt-Tab Overview Zoom
+### Alt-Tab Overview Zoom
 
 Holding Alt-Tab automatically scales the active workspace layout down to 72% towards the screen center, giving you a Mission-Control style overview of adjacent ribbon columns while switching windows.
 
