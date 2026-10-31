@@ -120,6 +120,7 @@ Keybindings are registered via `Quire.bind(chord, callback)`.
 | `wm.spawn(path)` | Launch an external program in isolated sandbox. |
 | `launcher.toggle()` | Open or close quick app menu. |
 | `launcher.commit()` | Launch currently highlighted app menu entry. |
+| `Quire.safe_close_window(hwnd)` | Smoothly close window using selected exit animation. |
 
 ---
 

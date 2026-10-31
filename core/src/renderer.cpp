@@ -1,7 +1,4 @@
 #include "../include/renderer.hpp"
-#include <unordered_map>
-
-static std::unordered_map<std::wstring, IDWriteTextFormat*> g_font_cache;
 
 static std::wstring utf8_to_wstring(const std::string& str) {
     if (str.empty()) return L"";
@@ -12,26 +9,29 @@ static std::wstring utf8_to_wstring(const std::string& str) {
     return out;
 }
 
-static IDWriteTextFormat* get_cached_text_format(IDWriteFactory* factory, const std::wstring& font, float size) {
-    if (!factory) return nullptr;
-    std::wstring key = font + L"_" + std::to_wstring(size);
-    auto it = g_font_cache.find(key);
-    if (it != g_font_cache.end()) return it->second;
+IDWriteTextFormat* Renderer::get_cached_text_format(const std::wstring& font, float size) {
+    if (!writeFactory) return nullptr;
+    float safe_size = (size > 0.0f) ? size : 12.0f;
+    std::wstring safe_font = font.empty() ? L"Segoe UI" : font;
+    std::wstring key = safe_font + L"_" + std::to_wstring(safe_size);
+
+    auto it = font_cache.find(key);
+    if (it != font_cache.end()) return it->second;
 
     IDWriteTextFormat* format = nullptr;
-    HRESULT hr = factory->CreateTextFormat(
-        font.c_str(),
+    HRESULT hr = writeFactory->CreateTextFormat(
+        safe_font.c_str(),
         nullptr,
         DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL,
-        size,
+        safe_size,
         L"",
         &format
     );
 
     if (SUCCEEDED(hr) && format) {
-        g_font_cache.emplace(std::move(key), format);
+        font_cache.emplace(std::move(key), format);
         return format;
     }
     return nullptr;
@@ -40,15 +40,31 @@ static IDWriteTextFormat* get_cached_text_format(IDWriteFactory* factory, const 
 Renderer::Renderer() : factory(nullptr), target(nullptr), brush(nullptr), writeFactory(nullptr) {}
 
 Renderer::~Renderer() {
-    for (auto& [_, fmt] : g_font_cache) {
+    shutdown();
+}
+
+void Renderer::shutdown() {
+    for (auto& [_, fmt] : font_cache) {
         if (fmt) fmt->Release();
     }
-    g_font_cache.clear();
+    font_cache.clear();
 
-    if (brush) brush->Release();
-    if (target) target->Release();
-    if (writeFactory) writeFactory->Release();
-    if (factory) factory->Release();
+    if (brush) {
+        brush->Release();
+        brush = nullptr;
+    }
+    if (target) {
+        target->Release();
+        target = nullptr;
+    }
+    if (writeFactory) {
+        writeFactory->Release();
+        writeFactory = nullptr;
+    }
+    if (factory) {
+        factory->Release();
+        factory = nullptr;
+    }
 }
 
 bool Renderer::init(HWND hwnd) {
@@ -68,6 +84,11 @@ bool Renderer::init(HWND hwnd) {
         (rc.right - rc.left > 0) ? (rc.right - rc.left) : 1,
         (rc.bottom - rc.top > 0) ? (rc.bottom - rc.top) : 1
     );
+
+    if (brush) {
+        brush->Release();
+        brush = nullptr;
+    }
 
     if (target) {
         target->Release();
@@ -142,7 +163,7 @@ void Renderer::draw_text(const std::string& text, float x, float y, float size, 
     std::wstring wfont = utf8_to_wstring(fontName);
     std::wstring wtext = utf8_to_wstring(text);
 
-    IDWriteTextFormat* format = get_cached_text_format(writeFactory, wfont, size);
+    IDWriteTextFormat* format = get_cached_text_format(wfont, size);
     if (!format) return;
 
     IDWriteTextLayout* layout = nullptr;
@@ -160,7 +181,7 @@ float Renderer::measure_text_width(const std::string& text, float size, const st
     std::wstring wfont = utf8_to_wstring(fontName);
     std::wstring wtext = utf8_to_wstring(text);
 
-    IDWriteTextFormat* format = get_cached_text_format(writeFactory, wfont, size);
+    IDWriteTextFormat* format = get_cached_text_format(wfont, size);
     if (!format) return 0.0f;
 
     IDWriteTextLayout* layout = nullptr;

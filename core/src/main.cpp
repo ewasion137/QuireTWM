@@ -427,6 +427,7 @@ std::string GetConfigDirectory() {
 
 int main() {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     timeBeginPeriod(1);
     try {
         SetConsoleCtrlHandler(ConsoleHandler, TRUE);
@@ -571,15 +572,24 @@ int main() {
 
         wm.set_function("move_window", [](size_t hwnd, double x, double y, double w, double h) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
+            if (!IsWindow(handle)) return;
             if (IsZoomed(handle)) ShowWindow(handle, SW_RESTORE);
+
+            if (x < -10000.0) {
+                SetWindowPos(handle, NULL, -20000, -20000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+                return;
+            }
 
             HWND insertAfter = HWND_NOTOPMOST;
             if (g_lua) {
-                sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
-                if (is_f.valid()) {
-                    auto res = is_f(hwnd);
-                    if (res.valid() && res.get<bool>()) {
-                        insertAfter = HWND_TOPMOST;
+                std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                if (g_lua) {
+                    sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
+                    if (is_f.valid()) {
+                        auto res = is_f(hwnd);
+                        if (res.valid() && res.get<bool>()) {
+                            insertAfter = HWND_TOPMOST;
+                        }
                     }
                 }
             }
@@ -595,21 +605,22 @@ int main() {
                 bm = windowRect.bottom - frameRect.bottom;
             }
 
-            UINT flags = SWP_NOACTIVATE;
-            if (insertAfter == HWND_NOTOPMOST) {
-                flags |= SWP_NOZORDER;
-            }
-
+            int cur_w = windowRect.right - windowRect.left;
+            int cur_h = windowRect.bottom - windowRect.top;
             int final_x = static_cast<int>(x) - lm;
             int final_y = static_cast<int>(y) - tm;
             int final_w = static_cast<int>(w) + lm + rm;
             int final_h = static_cast<int>(h) + tm + bm;
 
-            SetWindowPos(handle, insertAfter, final_x, final_y, final_w, final_h, flags);
-
-            if (final_x > -1000) {
-                RedrawWindow(handle, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
+            UINT flags = SWP_NOACTIVATE | SWP_NOCOPYBITS;
+            if (insertAfter == HWND_NOTOPMOST) {
+                flags |= SWP_NOZORDER;
             }
+            if (std::abs(cur_w - final_w) <= 1 && std::abs(cur_h - final_h) <= 1) {
+                flags |= SWP_NOSIZE;
+            }
+
+            SetWindowPos(handle, insertAfter, final_x, final_y, final_w, final_h, flags);
         });
 
         wm.set_function("move_to_monitor", [](size_t hwnd_val, int dir) {
@@ -845,10 +856,18 @@ int main() {
                     break;
                 }
 
-                if (msg.message == WM_HOTKEY && g_lua) {
+                if (msg.message == WM_HOTKEY) {
                     std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-                    sol::protected_function on_hotkey = (*g_lua)["Quire"]["on_hotkey"];
-                    if (on_hotkey.valid()) on_hotkey(static_cast<int>(msg.wParam));
+                    if (g_lua) {
+                        sol::protected_function on_hotkey = (*g_lua)["Quire"]["on_hotkey"];
+                        if (on_hotkey.valid()) {
+                            auto res = on_hotkey(static_cast<int>(msg.wParam));
+                            if (!res.valid()) {
+                                sol::error err = res;
+                                std::cerr << "[Quire Hotkey Error]: " << err.what() << std::endl;
+                            }
+                        }
+                    }
                 }
                 TranslateMessage(&msg);
                 DispatchMessageA(&msg);
@@ -877,12 +896,25 @@ int main() {
 
                 if (g_lua) {
                     std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-                    sol::protected_function render = (*g_lua)["Quire"]["on_render_overlay"];
-                    if (render.valid()) render();
+                    if (g_lua) {
+                        sol::protected_function render = (*g_lua)["Quire"]["on_render_overlay"];
+                        if (render.valid()) {
+                            auto res = render();
+                            if (!res.valid()) {
+                                sol::error err = res;
+                                std::cerr << "[Quire Render Error]: " << err.what() << std::endl;
+                            }
+                        }
+                    }
                 }
 
                 g_renderer.end_draw();
             }
+        }
+
+        {
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+            g_lua = nullptr;
         }
 
         Shell_NotifyIconA(NIM_DELETE, &g_nid);
@@ -894,12 +926,34 @@ int main() {
         CleanupAltTabHook();
         RestoreAllWindows();
 
+        if (g_overlay_hwnd && IsWindow(g_overlay_hwnd)) {
+            DestroyWindow(g_overlay_hwnd);
+            g_overlay_hwnd = NULL;
+        }
+        UnregisterClassA("QuireOverlay", wc.hInstance);
+
+        g_renderer.shutdown();
+        g_current_renderer = nullptr;
+
     } catch (const std::exception& e) {
         std::cerr << "FATAL: " << e.what() << std::endl;
+        {
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+            g_lua = nullptr;
+        }
         Shell_NotifyIconA(NIM_DELETE, &g_nid);
         RestoreAllWindows();
+        if (g_overlay_hwnd && IsWindow(g_overlay_hwnd)) {
+            DestroyWindow(g_overlay_hwnd);
+            g_overlay_hwnd = NULL;
+        }
+        g_renderer.shutdown();
+        g_current_renderer = nullptr;
+        timeEndPeriod(1);
+        CoUninitialize();
         return 1;
     }
     timeEndPeriod(1);
+    CoUninitialize();
     return 0;
 }

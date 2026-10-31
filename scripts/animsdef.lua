@@ -48,16 +48,16 @@ anims.easings = {
     end,
 
     elastic = function(t)
-        if t == 0.0 then return 0.0 end
-        if t == 1.0 then return 1.0 end
-        return math.pow(2.0, -10.0 * t) * math.sin((t * 10.0 - 0.75) * ((2.0 * math.pi) / 3.0)) + 1.0
-    end
+        if t <= 0.0 then return 0.0 end
+        if t >= 1.0 then return 1.0 end
+        return 1.0 - (2.0 ^ (-3.5 * t)) * math.cos(t * math.pi * 1.5)
+    end,
 }
 
 anims.idle = {
     pulse = function(time, base_color)
         local wave = (math.sin(time * 3.5) + 1.0) * 0.5
-        local alpha = base_color[4] * (0.65 + wave * 0.35)
+        local alpha = (base_color[4] or 1.0) * (0.65 + wave * 0.35)
         return { base_color[1], base_color[2], base_color[3], alpha }, 0, 0
     end,
 
@@ -73,7 +73,7 @@ anims.idle = {
         local r = math.min(1.0, base_color[1] + boost)
         local g = math.min(1.0, base_color[2] + boost)
         local b = math.min(1.0, base_color[3] + boost)
-        return { r, g, b, base_color[4] }, 0, 0
+        return { r, g, b, base_color[4] or 1.0 }, 0, 0
     end,
 
     heartbeat = function(time, base_color)
@@ -84,7 +84,7 @@ anims.idle = {
         elseif cycle > 0.22 and cycle < 0.37 then
             scale = math.sin(((cycle - 0.22) / 0.15) * math.pi) * 0.2
         end
-        local alpha = math.min(1.0, base_color[4] + scale)
+        local alpha = math.min(1.0, (base_color[4] or 1.0) + scale)
         return { base_color[1], base_color[2], base_color[3], alpha }, 0, 0
     end,
 
@@ -101,8 +101,8 @@ function anims.compute_alt_tab_zoom(x, y, w, h, factor, sw, sh)
     local win_cx = x + (w * 0.5)
     local win_cy = y + (h * 0.5)
 
-    local target_w = math.floor(w * factor)
-    local target_h = math.floor(h * factor)
+    local target_w = math.max(10, math.floor(w * factor))
+    local target_h = math.max(10, math.floor(h * factor))
     local target_cx = cx + (win_cx - cx) * factor
     local target_cy = cy + (win_cy - cy) * factor
 
@@ -113,19 +113,19 @@ function anims.compute_alt_tab_zoom(x, y, w, h, factor, sw, sh)
 end
 
 function anims.calc_close_geometry(mode, progress, x, y, w, h, sh)
-    local alpha = 1.0 - progress
+    local alpha = math.max(0.0, math.min(1.0, 1.0 - progress))
 
     if mode == "slide" then
         return x, y + math.floor(progress * progress * (sh - y)), w, h, alpha
     elseif mode == "scale" or mode == "zoom" then
-        local sf = 1.0 - progress
-        local nw = math.floor(w * sf)
-        local nh = math.floor(h * sf)
+        local sf = math.max(0.0, 1.0 - progress)
+        local nw = math.max(1, math.floor(w * sf))
+        local nh = math.max(1, math.floor(h * sf))
         local nx = x + math.floor((w - nw) * 0.5)
         local ny = y + math.floor((h - nh) * 0.5)
         return nx, ny, nw, nh, alpha
     elseif mode == "fold" or mode == "curtain" then
-        local nw = math.floor(w * (1.0 - progress))
+        local nw = math.max(1, math.floor(w * math.max(0.0, 1.0 - progress)))
         local nx = x + math.floor((w - nw) * 0.5)
         return nx, y, nw, h, alpha
     end

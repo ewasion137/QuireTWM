@@ -1,6 +1,7 @@
 Quire = {}
 HyprWin = Quire
 
+math.pow = math.pow or function(x, y) return x ^ y end
 package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua"
 local anims = require("animsdef")
 alttab = require("alttab")
@@ -183,21 +184,23 @@ local function layout_columns(ws_id, wx, wy, ww, wh, cfg)
     for _, col in ipairs(ws.columns) do
         local col_w = (col.width >= 0.99) and avail_w or math.floor((avail_w - cfg.gaps_in) * col.width)
         local n_rows = #col.windows
-        local total_gap_y = cfg.gaps_in * (n_rows - 1)
-        local row_h = math.floor((avail_h - total_gap_y) / n_rows)
+        if n_rows > 0 then
+            local total_gap_y = cfg.gaps_in * (n_rows - 1)
+            local row_h = math.floor((avail_h - total_gap_y) / n_rows)
 
-        local cur_y = base_y
-        for row_idx, hwnd in ipairs(col.windows) do
-            local h = (row_idx == n_rows) and (base_y + avail_h - cur_y) or row_h
-            Quire.window_targets[hwnd] = {
-                world_x = cur_x,
-                y = cur_y,
-                w = col_w,
-                h = h
-            }
-            cur_y = cur_y + h + cfg.gaps_in
+            local cur_y = base_y
+            for row_idx, hwnd in ipairs(col.windows) do
+                local h = (row_idx == n_rows) and (base_y + avail_h - cur_y) or row_h
+                Quire.window_targets[hwnd] = {
+                    world_x = cur_x,
+                    y = cur_y,
+                    w = col_w,
+                    h = math.max(10, h)
+                }
+                cur_y = cur_y + h + cfg.gaps_in
+            end
+            cur_x = cur_x + col_w + cfg.gaps_in
         end
-        cur_x = cur_x + col_w + cfg.gaps_in
     end
     return cur_x, avail_w
 end
@@ -250,11 +253,11 @@ function Quire.retile()
     if Quire.focused_window and not Quire.floating_windows[Quire.focused_window] then
         local target = Quire.window_targets[Quire.focused_window]
         if target then
-            camera_target_x = target.world_x - math.floor((ww - target.w) / 2)
+            camera_target_x = (target.world_x - wx) - math.floor((ww - target.w) / 2)
         end
     end
 
-    local max_cam_x = math.max(0, total_w - cfg.gaps_in + cfg.gaps_out - ww)
+    local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
 
     for _, c in pairs(Quire.window_currents) do
@@ -445,7 +448,7 @@ local function park_inactive_workspaces()
         if ws_id ~= Quire.current_workspace and ws_id ~= Quire.animating_ws then
             for _, col in ipairs(ws.columns) do
                 for _, hwnd in ipairs(col.windows) do
-                    wm.move_window(hwnd, -20000, 0, 800, 600)
+                    wm.move_window(hwnd, -20000, -20000, 0, 0)
                 end
             end
         end
@@ -461,7 +464,7 @@ function Quire.switch_workspace(target_ws)
         local prev_anim = get_ws(Quire.animating_ws)
         for _, col in ipairs(prev_anim.columns) do
             for _, hwnd in ipairs(col.windows) do
-                wm.move_window(hwnd, -20000, 0, 800, 600)
+                wm.move_window(hwnd, -20000, -20000, 0, 0)
             end
         end
     end
@@ -479,22 +482,47 @@ function Quire.switch_workspace(target_ws)
 
     camera_y = direction * sh
     camera_vy = 0.0
+    Quire.cam_anim_y = nil
 
     camera_x = 0.0
     camera_target_x = 0.0
     camera_vx = 0.0
+    Quire.cam_anim = nil
 
     local new_ws = get_ws(target_ws)
     for _, col in ipairs(new_ws.columns) do
         for _, hwnd in ipairs(col.windows) do
             local target = Quire.window_targets[hwnd]
-            local curr = Quire.window_currents[hwnd]
-            if target and curr then
-                curr.x = target.world_x
-                curr.vx = 0.0
-                curr.y = target.y + (direction * sh)
-                curr.vy = 0.0
-                curr.needs_sync = true
+            if target then
+                local curr = Quire.window_currents[hwnd]
+                if not curr then
+                    curr = {
+                        world_x = target.world_x,
+                        world_y = target.y,
+                        x = target.world_x,
+                        y = target.y + (direction * sh),
+                        w = target.w,
+                        h = target.h,
+                        vx = 0,
+                        vy = 0,
+                        vw = 0,
+                        vh = 0,
+                        needs_sync = true
+                    }
+                    Quire.window_currents[hwnd] = curr
+                else
+                    curr.world_x = target.world_x
+                    curr.world_y = target.y
+                    curr.vx = 0.0
+                    curr.vy = 0.0
+                    curr.w = target.w
+                    curr.h = target.h
+                    curr.vw = 0.0
+                    curr.vh = 0.0
+                    curr.x = target.world_x
+                    curr.y = target.y + (direction * sh)
+                    curr.needs_sync = true
+                end
             end
         end
     end
@@ -531,12 +559,17 @@ function Quire.move_to_workspace(target_ws)
     local dest_ws = get_ws(target_ws)
     table.insert(dest_ws.columns, {
         width = col_w,
-        windows = { focused }
+        windows = {focused}
     })
     Quire.window_ws[focused] = target_ws
 
     local _, sh = wm.get_screen_size()
-    local curr = Quire.window_currents[focused] or { x = 0, y = 0, w = 800, h = 600 }
+    local curr = Quire.window_currents[focused] or {
+        x = 0,
+        y = 0,
+        w = 800,
+        h = 600
+    }
 
     Quire.transferring_windows[focused] = {
         start_x = curr.x,
@@ -596,7 +629,9 @@ end
 
 function Quire.move_window_to_monitor(dir)
     local focused = Quire.focused_window
-    if not focused then return end
+    if not focused then
+        return
+    end
 
     local col_idx, row_idx, ws = Quire.find_window_pos(focused)
     if col_idx then
@@ -615,7 +650,7 @@ function Quire.move_window_to_monitor(dir)
     wm.move_to_monitor(focused, step)
 
     local rx, ry, rw, rh = wm.get_window_rect(focused)
-    Quire.floating_rects[focused] = { rx, ry, rw, rh }
+    Quire.floating_rects[focused] = {rx, ry, rw, rh}
 end
 
 function Quire.focus_direction(dir)
@@ -716,7 +751,9 @@ function Quire.toggle_fullscreen()
 end
 
 function Quire.safe_close_window(hwnd)
-    if not hwnd or Quire.closing_windows[hwnd] then return end
+    if not hwnd or Quire.closing_windows[hwnd] then
+        return
+    end
 
     local rx, ry, rw, rh = wm.get_window_rect(hwnd)
     Quire.closing_windows[hwnd] = {
@@ -856,7 +893,7 @@ Quire.on_render_overlay = function()
     for hwnd, tr in pairs(Quire.transferring_windows) do
         local progress = (now - tr.start_time) / tr.duration
         if progress >= 1.0 then
-            wm.move_window(hwnd, -20000, 0, 800, 600)
+            wm.move_window(hwnd, -20000, -20000, 0, 0)
             wm.set_window_opacity(hwnd, 1.0)
             Quire.transferring_windows[hwnd] = nil
         else
@@ -880,22 +917,68 @@ Quire.on_render_overlay = function()
         end
     end
 
-    local is_alttab = alttab.is_active and alttab.is_active() or false
-    local target_zoom = is_alttab and 0.88 or 1.0
-    Quire.alt_tab_zoom = Quire.alt_tab_zoom + (target_zoom - Quire.alt_tab_zoom) * math.min(1.0, dt * 14.0)
+    local is_alttab = Quire.alttab_active or (alttab and alttab.active) or false
+    local target_zoom = is_alttab and 0.72 or 1.0
+    Quire.alt_tab_zoom = Quire.alt_tab_zoom + (target_zoom - Quire.alt_tab_zoom) * math.min(1.0, dt * 18.0)
+    local is_zooming = math.abs(Quire.alt_tab_zoom - 1.0) > 0.002
 
     local cfg = Quire.config
-    local sp = cfg.spring
+    local easing_name = cfg.move_easing or "spring"
+    local ease_fn = anims.easings[easing_name]
+    local anim_dur = math.max(0.01, cfg.move_duration or 0.28)
 
-    camera_x, camera_vx = solve_spring(camera_x, camera_vx, camera_target_x, sp.stiffness, sp.damping, sp.mass, dt)
-    camera_y, camera_vy = solve_spring(camera_y, camera_vy, 0.0, sp.stiffness, sp.damping, sp.mass, dt)
+    if not ease_fn or easing_name == "spring" then
+        local sp = cfg.spring
+        camera_x, camera_vx = solve_spring(camera_x, camera_vx, camera_target_x, sp.stiffness, sp.damping, sp.mass, dt)
+    else
+        if not Quire.cam_anim or Quire.cam_anim.target ~= camera_target_x then
+            Quire.cam_anim = {
+                start_x = camera_x,
+                target = camera_target_x,
+                start_time = now,
+                duration = anim_dur
+            }
+        end
+        local ct = math.min(1.0, (now - Quire.cam_anim.start_time) / Quire.cam_anim.duration)
+        camera_x = Quire.cam_anim.start_x + (Quire.cam_anim.target - Quire.cam_anim.start_x) * ease_fn(ct)
+        camera_vx = 0.0
+    end
+
+    if not ease_fn or easing_name == "spring" then
+        local sp = cfg.spring
+        camera_y, camera_vy = solve_spring(camera_y, camera_vy, 0.0, sp.stiffness, sp.damping, sp.mass, dt)
+    else
+        if Quire.animating_ws then
+            if not Quire.cam_anim_y or Quire.cam_anim_y.ws ~= Quire.current_workspace then
+                Quire.cam_anim_y = {
+                    ws = Quire.current_workspace,
+                    start_y = camera_y,
+                    target = 0.0,
+                    start_time = now,
+                    duration = anim_dur
+                }
+            end
+            local ct = math.min(1.0, (now - Quire.cam_anim_y.start_time) / Quire.cam_anim_y.duration)
+            camera_y = Quire.cam_anim_y.start_y + (Quire.cam_anim_y.target - Quire.cam_anim_y.start_y) * ease_fn(ct)
+            if ct >= 1.0 then
+                camera_y = 0.0
+                camera_vy = 0.0
+                Quire.cam_anim_y = nil
+            else
+                camera_vy = 10.0
+            end
+        else
+            local sp = cfg.spring
+            camera_y, camera_vy = solve_spring(camera_y, camera_vy, 0.0, sp.stiffness, sp.damping, sp.mass, dt)
+        end
+    end
 
     if math.abs(camera_y) < 1.0 and math.abs(camera_vy) < 1.0 then
         if Quire.animating_ws then
             local old_ws = get_ws(Quire.animating_ws)
             for _, col in ipairs(old_ws.columns) do
                 for _, hwnd in ipairs(col.windows) do
-                    wm.move_window(hwnd, -20000, 0, 800, 600)
+                    wm.move_window(hwnd, -20000, -20000, 0, 0)
                 end
             end
             Quire.animating_ws = nil
@@ -919,17 +1002,22 @@ Quire.on_render_overlay = function()
     end
 
     local ws = get_ws(Quire.current_workspace)
+    local cam_floor_x = math.floor(camera_x)
+    local cam_floor_y = math.floor(camera_y)
+
     for _, col in ipairs(ws.columns) do
         for _, hwnd in ipairs(col.windows) do
             if not Quire.closing_windows[hwnd] and not Quire.transferring_windows[hwnd] then
                 local target = Quire.window_targets[hwnd]
                 if target then
-                    local screen_target_x = target.world_x - math.floor(camera_x)
-                    local screen_target_y = target.y + math.floor(camera_y)
                     local curr = Quire.window_currents[hwnd]
+                    local screen_target_x = target.world_x - cam_floor_x
+                    local screen_target_y = target.y + cam_floor_y
 
                     if not curr then
                         curr = {
+                            world_x = target.world_x,
+                            world_y = target.y,
                             x = screen_target_x,
                             y = screen_target_y,
                             w = target.w,
@@ -943,27 +1031,33 @@ Quire.on_render_overlay = function()
                         Quire.window_currents[hwnd] = curr
                         wm.move_window(hwnd, curr.x, curr.y, curr.w, curr.h)
                     else
-                        curr.x, curr.vx = solve_spring(curr.x, curr.vx, screen_target_x, sp.stiffness, sp.damping, sp.mass, dt)
-                        curr.y, curr.vy = solve_spring(curr.y, curr.vy, screen_target_y, sp.stiffness, sp.damping, sp.mass, dt)
+                        local sp = cfg.spring
+                        curr.world_x = curr.world_x or target.world_x
+                        curr.world_y = curr.world_y or target.y
+                        curr.vx = curr.vx or 0
+                        curr.vy = curr.vy or 0
+
+                        curr.world_x, curr.vx = solve_spring(curr.world_x, curr.vx, target.world_x, sp.stiffness, sp.damping, sp.mass, dt)
+                        curr.world_y, curr.vy = solve_spring(curr.world_y, curr.vy, target.y, sp.stiffness, sp.damping, sp.mass, dt)
                         curr.w, curr.vw = solve_spring(curr.w, curr.vw, target.w, sp.stiffness, sp.damping, sp.mass, dt)
                         curr.h, curr.vh = solve_spring(curr.h, curr.vh, target.h, sp.stiffness, sp.damping, sp.mass, dt)
 
+                        curr.x = math.floor(curr.world_x) - cam_floor_x
+                        curr.y = math.floor(curr.world_y) + cam_floor_y
+
                         local is_moving = (math.abs(curr.vx) > 0.2 or math.abs(curr.vy) > 0.2 or math.abs(curr.vw) > 0.2 or math.abs(curr.vh) > 0.2)
-                        local target_changed = (curr.last_tx ~= screen_target_x or curr.last_ty ~= screen_target_y or curr.last_tw ~= target.w or curr.last_th ~= target.h)
+                        local pos_changed = (curr.last_x ~= curr.x or curr.last_y ~= curr.y or curr.last_w ~= math.floor(curr.w) or curr.last_h ~= math.floor(curr.h))
 
-                        if is_moving or target_changed or curr.needs_sync or Quire.alt_tab_zoom < 0.999 then
-                            curr.last_tx = screen_target_x
-                            curr.last_ty = screen_target_y
-                            curr.last_tw = target.w
-                            curr.last_th = target.h
-                            curr.needs_sync = is_moving or (Quire.alt_tab_zoom < 0.999)
+                        if pos_changed or is_moving or curr.needs_sync or is_zooming then
+                            curr.last_x = curr.x
+                            curr.last_y = curr.y
+                            curr.last_w = math.floor(curr.w)
+                            curr.last_h = math.floor(curr.h)
+                            curr.needs_sync = is_moving or is_zooming
 
-                            local ix = math.floor(curr.x)
-                            local iy = math.floor(curr.y)
-                            local iw = math.floor(curr.w)
-                            local ih = math.floor(curr.h)
+                            local ix, iy, iw, ih = curr.x, curr.y, curr.last_w, curr.last_h
 
-                            if Quire.alt_tab_zoom < 0.999 then
+                            if Quire.alt_tab_zoom < 0.998 then
                                 ix, iy, iw, ih = anims.compute_alt_tab_zoom(ix, iy, iw, ih, Quire.alt_tab_zoom, sw, sh)
                             end
 
@@ -1016,7 +1110,7 @@ Quire.on_render_overlay = function()
                             bx, by, bw, bh = anims.compute_alt_tab_zoom(bx, by, bw, bh, Quire.alt_tab_zoom, sw, sh)
                         end
 
-                        ui.draw_rounded_rect(bx, by, bw, bh, cfg.rounding, col_color[1], col_color[2], col_color[3], col_color[4], cfg.border_size)
+                        ui.draw_rounded_rect(bx, by, bw, bh, cfg.rounding, col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, cfg.border_size)
                     end
                 end
             end
