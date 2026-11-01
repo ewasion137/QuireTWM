@@ -19,6 +19,13 @@
 #define ID_TRAY_RESTORE_SESSION 1006
 #define ID_TRAY_APP_BASE 2000
 
+#ifndef HID_USAGE_PAGE_GENERIC
+#define HID_USAGE_PAGE_GENERIC ((USHORT)0x01)
+#define HID_USAGE_GENERIC_MOUSE ((USHORT)0x02)
+#define HID_USAGE_PAGE_DIGITIZER ((USHORT)0x0D)
+#define HID_USAGE_DIGITIZER_TOUCH_PAD ((USHORT)0x05)
+#endif
+
 #include "../include/renderer.hpp"
 #include "../include/alttab.hpp"
 #include <dwmapi.h>
@@ -89,6 +96,13 @@ void UpdateTargetFps() {
         }
     }
     g_target_fps = rate;
+}
+
+void DispatchTrackpadScroll(float dx, float dy) {
+    if (!g_lua) return;
+    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+    sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
+    if (fn.valid()) fn(dx, dy);
 }
 
 void ShowTrayMenu(HWND hwnd) {
@@ -168,6 +182,39 @@ void ShowTrayMenu(HWND hwnd) {
 
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_INPUT: {
+        HRAWINPUT hRawInput = reinterpret_cast<HRAWINPUT>(lParam);
+        RAWINPUT raw = {};
+        UINT size = sizeof(raw);
+        if (GetRawInputData(hRawInput, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) > 0) {
+            if (raw.header.dwType == RIM_TYPEMOUSE) {
+                float dx = 0.0f;
+                float dy = 0.0f;
+
+                if (raw.data.mouse.usButtonFlags & RI_MOUSE_HORIZONTAL_WHEEL) {
+                    dx = static_cast<float>(static_cast<short>(raw.data.mouse.usButtonData));
+                }
+
+                if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL) {
+                    short wheel_delta = static_cast<short>(raw.data.mouse.usButtonData);
+                    bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                    bool alt_down = (GetKeyState(VK_MENU) & 0x8000) != 0;
+                    bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+                    if (shift_down || alt_down) {
+                        dx = static_cast<float>(wheel_delta);
+                    } else if (ctrl_down) {
+                        dy = static_cast<float>(wheel_delta);
+                    }
+                }
+
+                if (dx != 0.0f || dy != 0.0f) {
+                    DispatchTrackpadScroll(dx, dy);
+                }
+            }
+        }
+        return DefWindowProcA(hwnd, msg, wParam, lParam);
+    }
     case WM_QUIRE_TRAY: {
         if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP) {
             ShowTrayMenu(hwnd);
@@ -221,12 +268,26 @@ static HHOOK g_mouse_hook = nullptr;
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && g_lua) {
         auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
+        float dx = 0.0f;
+        float dy = 0.0f;
+
         if (wParam == WM_MOUSEHWHEEL) {
-            short delta = HIWORD(ms->mouseData);
-            float scroll_amount = static_cast<float>(delta);
-            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-            sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
-            if (fn.valid()) fn(scroll_amount);
+            dx = static_cast<float>(static_cast<short>(HIWORD(ms->mouseData)));
+        } else if (wParam == WM_MOUSEWHEEL) {
+            bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            bool alt_down = (GetKeyState(VK_MENU) & 0x8000) != 0;
+            bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            short wheel_delta = static_cast<short>(HIWORD(ms->mouseData));
+
+            if (shift_down || alt_down) {
+                dx = static_cast<float>(wheel_delta);
+            } else if (ctrl_down) {
+                dy = static_cast<float>(wheel_delta);
+            }
+        }
+
+        if (dx != 0.0f || dy != 0.0f) {
+            DispatchTrackpadScroll(dx, dy);
         }
     }
     return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
@@ -781,7 +842,20 @@ int main() {
             WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN),
             GetSystemMetrics(SM_CYSCREEN), NULL, NULL, wc.hInstance, NULL);
-            
+
+        RAWINPUTDEVICE rid[2] = {};
+        rid[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
+        rid[0].usUsage = HID_USAGE_GENERIC_MOUSE;
+        rid[0].dwFlags = RIDEV_INPUTSINK;
+        rid[0].hwndTarget = overlay_hwnd;
+
+        rid[1].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
+        rid[1].usUsage = HID_USAGE_DIGITIZER_TOUCH_PAD;
+        rid[1].dwFlags = RIDEV_INPUTSINK;
+        rid[1].hwndTarget = overlay_hwnd;
+
+        RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE));
+
         g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc, GetModuleHandleA(NULL), 0);
         g_overlay_hwnd = overlay_hwnd;
         SetLayeredWindowAttributes(overlay_hwnd, 0, 255, LWA_ALPHA);

@@ -1,7 +1,9 @@
 Quire = {}
 HyprWin = Quire
 
-math.pow = math.pow or function(x, y) return x ^ y end
+math.pow = math.pow or function(x, y)
+    return x ^ y
+end
 package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua"
 local anims = require("animsdef")
 alttab = require("alttab")
@@ -250,7 +252,9 @@ function Quire.retile()
     end
     local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
 
-    if Quire.focused_window and not Quire.floating_windows[Quire.focused_window] then
+    local is_scrolling = get_wall_time() < (Quire.scroll_active_until or 0.0)
+
+    if not is_scrolling and Quire.focused_window and not Quire.floating_windows[Quire.focused_window] then
         local target = Quire.window_targets[Quire.focused_window]
         if target then
             camera_target_x = (target.world_x - wx) - math.floor((ww - target.w) / 2)
@@ -995,7 +999,8 @@ Quire.on_render_overlay = function()
             for _, hwnd in ipairs(col.windows) do
                 local target = Quire.window_targets[hwnd]
                 if target then
-                    wm.move_window(hwnd, target.world_x - math.floor(camera_x), target.y + old_offset_y, target.w, target.h)
+                    wm.move_window(hwnd, target.world_x - math.floor(camera_x), target.y + old_offset_y, target.w,
+                        target.h)
                 end
             end
         end
@@ -1037,16 +1042,21 @@ Quire.on_render_overlay = function()
                         curr.vx = curr.vx or 0
                         curr.vy = curr.vy or 0
 
-                        curr.world_x, curr.vx = solve_spring(curr.world_x, curr.vx, target.world_x, sp.stiffness, sp.damping, sp.mass, dt)
-                        curr.world_y, curr.vy = solve_spring(curr.world_y, curr.vy, target.y, sp.stiffness, sp.damping, sp.mass, dt)
+                        curr.world_x, curr.vx = solve_spring(curr.world_x, curr.vx, target.world_x, sp.stiffness,
+                            sp.damping, sp.mass, dt)
+                        curr.world_y, curr.vy = solve_spring(curr.world_y, curr.vy, target.y, sp.stiffness, sp.damping,
+                            sp.mass, dt)
                         curr.w, curr.vw = solve_spring(curr.w, curr.vw, target.w, sp.stiffness, sp.damping, sp.mass, dt)
                         curr.h, curr.vh = solve_spring(curr.h, curr.vh, target.h, sp.stiffness, sp.damping, sp.mass, dt)
 
                         curr.x = math.floor(curr.world_x) - cam_floor_x
                         curr.y = math.floor(curr.world_y) + cam_floor_y
 
-                        local is_moving = (math.abs(curr.vx) > 0.2 or math.abs(curr.vy) > 0.2 or math.abs(curr.vw) > 0.2 or math.abs(curr.vh) > 0.2)
-                        local pos_changed = (curr.last_x ~= curr.x or curr.last_y ~= curr.y or curr.last_w ~= math.floor(curr.w) or curr.last_h ~= math.floor(curr.h))
+                        local is_moving =
+                            (math.abs(curr.vx) > 0.2 or math.abs(curr.vy) > 0.2 or math.abs(curr.vw) > 0.2 or
+                                math.abs(curr.vh) > 0.2)
+                        local pos_changed = (curr.last_x ~= curr.x or curr.last_y ~= curr.y or curr.last_w ~=
+                                                math.floor(curr.w) or curr.last_h ~= math.floor(curr.h))
 
                         if pos_changed or is_moving or curr.needs_sync or is_zooming then
                             curr.last_x = curr.x
@@ -1110,7 +1120,8 @@ Quire.on_render_overlay = function()
                             bx, by, bw, bh = anims.compute_alt_tab_zoom(bx, by, bw, bh, Quire.alt_tab_zoom, sw, sh)
                         end
 
-                        ui.draw_rounded_rect(bx, by, bw, bh, cfg.rounding, col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, cfg.border_size)
+                        ui.draw_rounded_rect(bx, by, bw, bh, cfg.rounding, col_color[1], col_color[2], col_color[3],
+                            col_color[4] or 1.0, cfg.border_size)
                     end
                 end
             end
@@ -1199,15 +1210,72 @@ Quire.reload_config = function()
     end
 end
 
-Quire.on_trackpad_scroll = function(delta)
+local last_scroll_ts = 0.0
+local last_scroll_dx = 0.0
+local last_scroll_dy = 0.0
+local vert_scroll_accum = 0.0
+
+Quire.on_trackpad_scroll = function(dx, dy)
+    local now = get_wall_time()
+    if math.abs(now - last_scroll_ts) < 0.008 and math.abs(dx - last_scroll_dx) < 0.1 and math.abs(dy - last_scroll_dy) <
+        0.1 then
+        return
+    end
+    last_scroll_ts = now
+    last_scroll_dx = dx
+    last_scroll_dy = dy
+
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
     local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
-    local max_cam_x = math.max(0, total_w - cfg.gaps_in + cfg.gaps_out - ww)
+    local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
 
-    camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (delta * 1.5)))
-    for _, c in pairs(Quire.window_currents) do
-        c.needs_sync = true
+    -- Горизонтальный скролл ленты (2 пальца влево/вправо)
+    if math.abs(dx) > 0.01 then
+        local speed = cfg.trackpad_speed or 1.4
+        camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (dx * speed)))
+        Quire.scroll_active_until = now + 0.35
+
+        -- Niri-поведение: фокус следует за окном, ближайшим к центру экрана
+        local ws = get_ws(Quire.current_workspace)
+        local screen_center = wx + math.floor(ww / 2)
+        local closest_hwnd = nil
+        local closest_dist = 999999.0
+
+        for _, col in ipairs(ws.columns) do
+            if #col.windows > 0 then
+                local hwnd = col.windows[1]
+                local target = Quire.window_targets[hwnd]
+                if target then
+                    local win_screen_center = (target.world_x - math.floor(camera_target_x)) + math.floor(target.w / 2)
+                    local dist = math.abs(win_screen_center - screen_center)
+                    if dist < closest_dist then
+                        closest_dist = dist
+                        closest_hwnd = hwnd
+                    end
+                end
+            end
+        end
+
+        if closest_hwnd and closest_hwnd ~= Quire.focused_window then
+            Quire.focused_window = closest_hwnd
+        end
+
+        for _, c in pairs(Quire.window_currents) do
+            c.needs_sync = true
+        end
+    end
+
+    -- Вертикальный скролл (переключение рабочих столов 2 пальцами с Ctrl)
+    if math.abs(dy) > 0.01 then
+        vert_scroll_accum = vert_scroll_accum + dy
+        if vert_scroll_accum > 100.0 then
+            Quire.cycle_workspace(-1)
+            vert_scroll_accum = 0.0
+        elseif vert_scroll_accum < -100.0 then
+            Quire.cycle_workspace(1)
+            vert_scroll_accum = 0.0
+        end
     end
 end
 
@@ -1366,6 +1434,32 @@ if not fn then
     end)
     Quire.bind("Alt+Ctrl+L", function()
         Quire.move_window_to_monitor("right")
+    end)
+    -- Нативный мост тачпада Windows (3-пальцевые и 4-пальцевые свайпы)
+    Quire.bind("Win+Ctrl+Left", function()
+        Quire.focus_direction("left")
+    end)
+    Quire.bind("Win+Ctrl+Right", function()
+        Quire.focus_direction("right")
+    end)
+    Quire.bind("Win+Ctrl+Up", function()
+        Quire.cycle_workspace(-1)
+    end)
+    Quire.bind("Win+Ctrl+Down", function()
+        Quire.cycle_workspace(1)
+    end)
+
+    Quire.bind("Ctrl+Alt+Left", function()
+        Quire.focus_direction("left")
+    end)
+    Quire.bind("Ctrl+Alt+Right", function()
+        Quire.focus_direction("right")
+    end)
+    Quire.bind("Ctrl+Alt+Up", function()
+        Quire.cycle_workspace(-1)
+    end)
+    Quire.bind("Ctrl+Alt+Down", function()
+        Quire.cycle_workspace(1)
     end)
     Quire.bind("Alt+F", Quire.toggle_fullscreen)
     Quire.bind("Alt+V", Quire.toggle_floating)
