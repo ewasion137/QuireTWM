@@ -47,7 +47,6 @@
 #include <windows.h>
 #include <windowsx.h>
 
-
 extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
@@ -299,7 +298,7 @@ static HHOOK g_mouse_hook = nullptr;
 
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && g_lua) {
-        auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
+        auto *ms = reinterpret_cast<MSLLHOOKSTRUCT *>(lParam);
         float dx = 0.0f;
         float dy = 0.0f;
         bool is_wheel = (wParam == WM_MOUSEWHEEL || wParam == WM_MOUSEHWHEEL);
@@ -323,7 +322,8 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
             if (dx != 0.0f || (dy != 0.0f && ctrl)) {
                 std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                 if (g_lua) {
-                    sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
+                    sol::protected_function fn =
+                        (*g_lua)["Quire"]["on_trackpad_scroll"];
                     if (fn.valid()) {
                         auto res = fn(dx, dy, ctrl);
                         if (res.valid() && res.get<bool>()) {
@@ -950,6 +950,17 @@ int main() {
                             if (g_current_renderer)
                                 g_current_renderer->draw_rounded_rect(
                                     x, y, w, h, rad, r, g, b, a, th);
+                        });
+        ui.set_function("draw_gradient_rounded_rect",
+                        [](float x, float y, float w, float h, float rad,
+                           float r1, float g1, float b1, float a1, float r2,
+                           float g2, float b2, float a2, float angle,
+                           float th) {
+                            if (g_current_renderer) {
+                                g_current_renderer->draw_gradient_rounded_rect(
+                                    x, y, w, h, rad, r1, g1, b1, a1, r2, g2, b2,
+                                    a2, angle, th);
+                            }
                         });
         ui.set_function("fill_rounded_rect", [](float x, float y, float w,
                                                 float h, float rad, float r,

@@ -12,12 +12,13 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         return CallNextHookEx(g_keyboard_hook, nCode, wParam, lParam);
     }
 
-    auto* kbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+    auto *kbd = reinterpret_cast<KBDLLHOOKSTRUCT *>(lParam);
     if (kbd->flags & LLKHF_INJECTED) {
         return CallNextHookEx(g_keyboard_hook, nCode, wParam, lParam);
     }
 
-    bool alt_down = (kbd->flags & LLKHF_ALTDOWN) || ((GetKeyState(VK_MENU) & 0x8000) != 0);
+    bool alt_down =
+        (kbd->flags & LLKHF_ALTDOWN) || ((GetKeyState(VK_MENU) & 0x8000) != 0);
 
     if (kbd->vkCode == VK_TAB && alt_down) {
         if (wParam == WM_SYSKEYDOWN || wParam == WM_KEYDOWN) {
@@ -25,7 +26,8 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
 
             if (g_overlay_hwnd && IsWindow(g_overlay_hwnd)) {
-                PostMessageA(g_overlay_hwnd, WM_HYPRWIN_ALTTAB, shift_down ? 1 : 0, 0);
+                PostMessageA(g_overlay_hwnd, WM_HYPRWIN_ALTTAB,
+                             shift_down ? 1 : 0, 0);
             }
             return 1;
         }
@@ -39,7 +41,9 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         return 1;
     }
 
-    if ((kbd->vkCode == VK_MENU || kbd->vkCode == VK_LMENU || kbd->vkCode == VK_RMENU) && g_alttab_active) {
+    if ((kbd->vkCode == VK_MENU || kbd->vkCode == VK_LMENU ||
+         kbd->vkCode == VK_RMENU) &&
+        g_alttab_active) {
         if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
             g_alttab_active = false;
             if (g_overlay_hwnd && IsWindow(g_overlay_hwnd)) {
@@ -52,8 +56,10 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 bool InitializeAltTabHook() {
-    if (g_keyboard_hook) return true;
-    g_keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, GetModuleHandle(nullptr), 0);
+    if (g_keyboard_hook)
+        return true;
+    g_keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc,
+                                       GetModuleHandle(nullptr), 0);
     return g_keyboard_hook != nullptr;
 }
 

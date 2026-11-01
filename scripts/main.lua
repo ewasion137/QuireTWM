@@ -1,4 +1,5 @@
 Quire = {}
+Quire.hooks = {}
 HyprWin = Quire
 
 math.pow = math.pow or function(x, y)
@@ -1006,7 +1007,7 @@ Quire.on_render_overlay = function()
             end
         end
     end
-    
+
     if Quire.animating_ws then
         local old_ws = get_ws(Quire.animating_ws)
         local old_offset_y = math.floor(camera_y) - (Quire.anim_direction * sh)
@@ -1123,20 +1124,44 @@ Quire.on_render_overlay = function()
                     local curr = Quire.window_currents[hwnd]
                     if curr and curr.x > -curr.w and curr.x < sw then
                         local is_active = (hwnd == Quire.focused_window) and (fg == hwnd)
-                        local col_color = is_active and cfg.border_active or cfg.border_inactive
-                        local offset_x, offset_y = 0, 0
+                        local bx, by, bw, bh = curr.x, curr.y, curr.w, curr.h
 
-                        if is_active and anims.idle[cfg.idle_mode] then
-                            col_color, offset_x, offset_y = anims.idle[cfg.idle_mode](now, col_color)
-                        end
-
-                        local bx, by, bw, bh = curr.x + offset_x, curr.y + offset_y, curr.w, curr.h
                         if Quire.alt_tab_zoom < 0.999 then
                             bx, by, bw, bh = anims.compute_alt_tab_zoom(bx, by, bw, bh, Quire.alt_tab_zoom, sw, sh)
                         end
 
-                        ui.draw_rounded_rect(bx, by, bw, bh, cfg.rounding, col_color[1], col_color[2], col_color[3],
-                            col_color[4] or 1.0, cfg.border_size)
+                        local win_ctx = {
+                            hwnd = hwnd,
+                            x = bx,
+                            y = by,
+                            w = bw,
+                            h = bh,
+                            active = is_active,
+                            time = now,
+                            title = wm.get_window_title(hwnd),
+                            class = wm.get_class_name(hwnd),
+                            process = wm.get_process_name and wm.get_process_name(hwnd) or "",
+                            rounding = cfg.rounding,
+                            thickness = cfg.border_size
+                        }
+
+                        local handled = false
+                        if Quire.hooks.on_draw_window_border then
+                            local ok, res = pcall(Quire.hooks.on_draw_window_border, win_ctx)
+                            if ok and res == true then
+                                handled = true
+                            end
+                        end
+
+                        if not handled then
+                            local col_color = is_active and cfg.border_active or cfg.border_inactive
+                            local offset_x, offset_y = 0, 0
+                            if is_active and anims.idle[cfg.idle_mode] then
+                                col_color, offset_x, offset_y = anims.idle[cfg.idle_mode](now, col_color)
+                            end
+                            ui.draw_rounded_rect(bx + offset_x, by + offset_y, bw, bh, cfg.rounding,
+                                                 col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, cfg.border_size)
+                        end
                     end
                 end
             end
