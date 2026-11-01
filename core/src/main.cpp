@@ -26,6 +26,10 @@
 #define HID_USAGE_DIGITIZER_TOUCH_PAD ((USHORT)0x05)
 #endif
 
+#ifndef RI_MOUSE_HWHEEL
+#define RI_MOUSE_HWHEEL 0x0800
+#endif
+
 #include "../include/renderer.hpp"
 #include "../include/alttab.hpp"
 #include <dwmapi.h>
@@ -187,11 +191,11 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         RAWINPUT raw = {};
         UINT size = sizeof(raw);
         if (GetRawInputData(hRawInput, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) > 0) {
-            if (raw.header.dwType == RIM_TYPEMOUSE) {
+            if (raw.data.mouse.usButtonFlags & RI_MOUSE_HWHEEL) {
                 float dx = 0.0f;
                 float dy = 0.0f;
 
-                if (raw.data.mouse.usButtonFlags & RI_MOUSE_HORIZONTAL_WHEEL) {
+                if (raw.data.mouse.usButtonFlags & RI_MOUSE_HWHEEL) {
                     dx = static_cast<float>(static_cast<short>(raw.data.mouse.usButtonData));
                 }
 
@@ -274,20 +278,24 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (wParam == WM_MOUSEHWHEEL) {
             dx = static_cast<float>(static_cast<short>(HIWORD(ms->mouseData)));
         } else if (wParam == WM_MOUSEWHEEL) {
-            bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            bool alt_down = (GetKeyState(VK_MENU) & 0x8000) != 0;
-            bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-            short wheel_delta = static_cast<short>(HIWORD(ms->mouseData));
+            short raw = static_cast<short>(HIWORD(ms->mouseData));
+            bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
-            if (shift_down || alt_down) {
-                dx = static_cast<float>(wheel_delta);
-            } else if (ctrl_down) {
-                dy = static_cast<float>(wheel_delta);
+            if (shift || alt) {
+                dx = static_cast<float>(raw);
+            } else {
+                dy = static_cast<float>(raw);
             }
         }
 
         if (dx != 0.0f || dy != 0.0f) {
-            DispatchTrackpadScroll(dx, dy);
+            bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+            sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
+            if (fn.valid()) {
+                fn(dx, dy, ctrl);
+            }
         }
     }
     return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
@@ -791,6 +799,11 @@ int main() {
         wm.set_function("is_minimized", [](size_t hwnd) {
             return static_cast<bool>(IsIconic(reinterpret_cast<HWND>(hwnd)));
         });
+
+        wm.set_function("cloak_window", [](size_t hwnd, bool cloak) {
+    int val = cloak ? 1 : 0;
+    DwmSetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_CLOAKED, &val, sizeof(val));
+});
 
         wm.set_function("enumerate_windows", []() {
             std::vector<size_t> hwnds;

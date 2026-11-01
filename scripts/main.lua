@@ -452,7 +452,13 @@ local function park_inactive_workspaces()
         if ws_id ~= Quire.current_workspace and ws_id ~= Quire.animating_ws then
             for _, col in ipairs(ws.columns) do
                 for _, hwnd in ipairs(col.windows) do
-                    wm.move_window(hwnd, -20000, -20000, 0, 0)
+                    wm.cloak_window(hwnd, true)
+                end
+            end
+        else
+            for _, col in ipairs(ws.columns) do
+                for _, hwnd in ipairs(col.windows) do
+                    wm.cloak_window(hwnd, false)
                 end
             end
         end
@@ -704,9 +710,7 @@ end
 
 function Quire.toggle_floating()
     local focused = Quire.focused_window
-    if not focused then
-        return
-    end
+    if not focused then return end
 
     local wx, wy, ww, wh = wm.get_work_area()
 
@@ -714,13 +718,11 @@ function Quire.toggle_floating()
         Quire.floating_windows[focused] = nil
         Quire.floating_rects[focused] = nil
         local ws = get_ws(Quire.current_workspace)
-        table.insert(ws.columns, {
-            width = Quire.config.default_column_width,
-            windows = {focused}
-        })
+        table.insert(ws.columns, { width = Quire.config.default_column_width, windows = { focused } })
         Quire.retile()
     else
         local col_idx, row_idx, ws = Quire.find_window_pos(focused)
+        local cur_x, cur_y, cur_w, cur_h = wm.get_window_rect(focused)
         if col_idx then
             table.remove(ws.columns[col_idx].windows, row_idx)
             if #ws.columns[col_idx].windows == 0 then
@@ -730,15 +732,19 @@ function Quire.toggle_floating()
 
         Quire.floating_windows[focused] = true
         Quire.window_targets[focused] = nil
-        Quire.window_currents[focused] = nil
 
         local fw = math.floor(ww * 0.60)
         local fh = math.floor(wh * 0.70)
         local fx = wx + math.floor((ww - fw) / 2)
         local fy = wy + math.floor((wh - fh) / 2)
 
-        Quire.floating_rects[focused] = {fx, fy, fw, fh}
-        wm.move_window(focused, fx, fy, fw, fh)
+        Quire.floating_rects[focused] = { fx, fy, fw, fh }
+        
+        -- Плавный переход из геометрии ленты во float
+        local curr = Quire.window_currents[focused] or { x = cur_x, y = cur_y, w = cur_w, h = cur_h, vx = 0, vy = 0, vw = 0, vh = 0 }
+        curr.x, curr.y, curr.w, curr.h = cur_x, cur_y, cur_w, cur_h
+        curr.needs_sync = true
+        Quire.window_currents[focused] = curr
     end
     trigger_hud()
 end
@@ -778,6 +784,9 @@ Quire.dispatch_event = function(event_type, hwnd, title)
     end
 
     if event_type == 0x000B then
+        if get_wall_time() < (Quire.scroll_active_until or 0.0) then
+            return
+        end
         local col, _, _, ws_id = Quire.find_window_pos(hwnd)
         if col and not Quire.floating_windows[hwnd] and ws_id == Quire.current_workspace then
             local rx, ry = wm.get_window_rect(hwnd)
@@ -795,6 +804,9 @@ Quire.dispatch_event = function(event_type, hwnd, title)
     end
 
     if event_type == 0x0003 then
+        if get_wall_time() < (Quire.scroll_active_until or 0.0) then
+            return
+        end
         local col_idx, _, _, existing_ws = Quire.find_window_pos(hwnd)
         if existing_ws and existing_ws ~= Quire.current_workspace then
             local cur_time = get_wall_time()
@@ -931,9 +943,12 @@ Quire.on_render_overlay = function()
     local ease_fn = anims.easings[easing_name]
     local anim_dur = math.max(0.01, cfg.move_duration or 0.28)
 
-    if not ease_fn or easing_name == "spring" then
+    local is_touch_scrolling = now < (Quire.scroll_active_until or 0.0)
+
+    if is_touch_scrolling or not ease_fn or easing_name == "spring" then
         local sp = cfg.spring
         camera_x, camera_vx = solve_spring(camera_x, camera_vx, camera_target_x, sp.stiffness, sp.damping, sp.mass, dt)
+        Quire.cam_anim = nil
     else
         if not Quire.cam_anim or Quire.cam_anim.target ~= camera_target_x then
             Quire.cam_anim = {
@@ -1215,67 +1230,62 @@ local last_scroll_dx = 0.0
 local last_scroll_dy = 0.0
 local vert_scroll_accum = 0.0
 
-Quire.on_trackpad_scroll = function(dx, dy)
+Quire.on_trackpad_scroll = function(dx, dy, ctrl_down)
     local now = get_wall_time()
-    if math.abs(now - last_scroll_ts) < 0.008 and math.abs(dx - last_scroll_dx) < 0.1 and math.abs(dy - last_scroll_dy) <
-        0.1 then
+
+    if ctrl_down then
+        local delta_y = (dy ~= 0.0) and dy or dx
+        vert_scroll_accum = vert_scroll_accum + delta_y
+        if vert_scroll_accum >= 90.0 then
+            Quire.cycle_workspace(-1)
+            vert_scroll_accum = 0.0
+        elseif vert_scroll_accum <= -90.0 then
+            Quire.cycle_workspace(1)
+            vert_scroll_accum = 0.0
+        end
         return
     end
-    last_scroll_ts = now
-    last_scroll_dx = dx
-    last_scroll_dy = dy
+
+    local scroll_val = (dx ~= 0.0) and dx or (-dy)
+    if math.abs(scroll_val) < 0.01 then
+        return
+    end
 
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
     local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
     local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
 
-    -- Горизонтальный скролл ленты (2 пальца влево/вправо)
-    if math.abs(dx) > 0.01 then
-        local speed = cfg.trackpad_speed or 1.4
-        camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (dx * speed)))
-        Quire.scroll_active_until = now + 0.35
+    local speed = cfg.trackpad_speed or 1.2
+    camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (scroll_val * speed)))
+    Quire.scroll_active_until = now + 0.40
 
-        -- Niri-поведение: фокус следует за окном, ближайшим к центру экрана
-        local ws = get_ws(Quire.current_workspace)
-        local screen_center = wx + math.floor(ww / 2)
-        local closest_hwnd = nil
-        local closest_dist = 999999.0
+    local ws = get_ws(Quire.current_workspace)
+    local screen_center = wx + math.floor(ww / 2)
+    local best_hwnd = nil
+    local best_dist = 1e9
 
-        for _, col in ipairs(ws.columns) do
-            if #col.windows > 0 then
-                local hwnd = col.windows[1]
-                local target = Quire.window_targets[hwnd]
-                if target then
-                    local win_screen_center = (target.world_x - math.floor(camera_target_x)) + math.floor(target.w / 2)
-                    local dist = math.abs(win_screen_center - screen_center)
-                    if dist < closest_dist then
-                        closest_dist = dist
-                        closest_hwnd = hwnd
-                    end
+    for _, col in ipairs(ws.columns) do
+        if #col.windows > 0 then
+            local hwnd = col.windows[1]
+            local target = Quire.window_targets[hwnd]
+            if target then
+                local win_center = (target.world_x - math.floor(camera_target_x)) + math.floor(target.w / 2)
+                local dist = math.abs(win_center - screen_center)
+                if dist < best_dist then
+                    best_dist = dist
+                    best_hwnd = hwnd
                 end
             end
         end
-
-        if closest_hwnd and closest_hwnd ~= Quire.focused_window then
-            Quire.focused_window = closest_hwnd
-        end
-
-        for _, c in pairs(Quire.window_currents) do
-            c.needs_sync = true
-        end
     end
 
-    -- Вертикальный скролл (переключение рабочих столов 2 пальцами с Ctrl)
-    if math.abs(dy) > 0.01 then
-        vert_scroll_accum = vert_scroll_accum + dy
-        if vert_scroll_accum > 100.0 then
-            Quire.cycle_workspace(-1)
-            vert_scroll_accum = 0.0
-        elseif vert_scroll_accum < -100.0 then
-            Quire.cycle_workspace(1)
-            vert_scroll_accum = 0.0
-        end
+    if best_hwnd and best_hwnd ~= Quire.focused_window then
+        Quire.focused_window = best_hwnd
+    end
+
+    for _, c in pairs(Quire.window_currents) do
+        c.needs_sync = true
     end
 end
 
@@ -1435,7 +1445,6 @@ if not fn then
     Quire.bind("Alt+Ctrl+L", function()
         Quire.move_window_to_monitor("right")
     end)
-    -- Нативный мост тачпада Windows (3-пальцевые и 4-пальцевые свайпы)
     Quire.bind("Win+Ctrl+Left", function()
         Quire.focus_direction("left")
     end)
