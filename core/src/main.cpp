@@ -19,17 +19,6 @@
 #define ID_TRAY_RESTORE_SESSION 1006
 #define ID_TRAY_APP_BASE 2000
 
-#ifndef HID_USAGE_PAGE_GENERIC
-#define HID_USAGE_PAGE_GENERIC ((USHORT)0x01)
-#define HID_USAGE_GENERIC_MOUSE ((USHORT)0x02)
-#define HID_USAGE_PAGE_DIGITIZER ((USHORT)0x0D)
-#define HID_USAGE_DIGITIZER_TOUCH_PAD ((USHORT)0x05)
-#endif
-
-#ifndef RI_MOUSE_HWHEEL
-#define RI_MOUSE_HWHEEL 0x0800
-#endif
-
 #include "../include/alttab.hpp"
 #include "../include/renderer.hpp"
 #include <chrono>
@@ -102,15 +91,6 @@ void UpdateTargetFps() {
         }
     }
     g_target_fps = rate;
-}
-
-void DispatchTrackpadScroll(float dx, float dy) {
-    if (!g_lua)
-        return;
-    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-    sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
-    if (fn.valid())
-        fn(dx, dy);
 }
 
 void ShowTrayMenu(HWND hwnd) {
@@ -203,42 +183,6 @@ void ShowTrayMenu(HWND hwnd) {
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam,
                                 LPARAM lParam) {
     switch (msg) {
-    case WM_INPUT: {
-        HRAWINPUT hRawInput = reinterpret_cast<HRAWINPUT>(lParam);
-        RAWINPUT raw = {};
-        UINT size = sizeof(raw);
-        if (GetRawInputData(hRawInput, RID_INPUT, &raw, &size,
-                            sizeof(RAWINPUTHEADER)) > 0) {
-            if (raw.data.mouse.usButtonFlags & RI_MOUSE_HWHEEL) {
-                float dx = 0.0f;
-                float dy = 0.0f;
-
-                if (raw.data.mouse.usButtonFlags & RI_MOUSE_HWHEEL) {
-                    dx = static_cast<float>(
-                        static_cast<short>(raw.data.mouse.usButtonData));
-                }
-
-                if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL) {
-                    short wheel_delta =
-                        static_cast<short>(raw.data.mouse.usButtonData);
-                    bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-                    bool alt_down = (GetKeyState(VK_MENU) & 0x8000) != 0;
-                    bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-
-                    if (shift_down || alt_down) {
-                        dx = static_cast<float>(wheel_delta);
-                    } else if (ctrl_down) {
-                        dy = static_cast<float>(wheel_delta);
-                    }
-                }
-
-                if (dx != 0.0f || dy != 0.0f) {
-                    DispatchTrackpadScroll(dx, dy);
-                }
-            }
-        }
-        return DefWindowProcA(hwnd, msg, wParam, lParam);
-    }
     case WM_QUIRE_TRAY: {
         if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP) {
             ShowTrayMenu(hwnd);
@@ -432,89 +376,99 @@ void IPCServerThread() {
     }
 }
 
+bool IsManagedWindow(HWND hwnd) {
+    if (!g_lua)
+        return false;
+    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+    sol::protected_function fn = (*g_lua)["Quire"]["is_managed"];
+    if (fn.valid()) {
+        auto res = fn(reinterpret_cast<size_t>(hwnd));
+        if (res.valid() && res.get<bool>())
+            return true;
+    }
+    return false;
+}
+
 bool IsToplevelWindow(HWND hwnd) {
-    if (!IsWindow(hwnd))
+    if (!IsWindow(hwnd) || hwnd == g_overlay_hwnd)
         return false;
 
     DWORD pid;
     GetWindowThreadProcessId(hwnd, &pid);
-    if (pid == GetCurrentProcessId())
-        return false;
-
-    if (!IsWindowVisible(hwnd))
+    if (pid == GetCurrentProcessId() || !IsWindowVisible(hwnd))
         return false;
 
     LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     HWND owner = GetWindow(hwnd, GW_OWNER);
 
-    if (ex_style & WS_EX_TOPMOST)
-        return false;
     if (ex_style & WS_EX_TOOLWINDOW)
         return false;
 
-    int cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked,
-                                        sizeof(cloaked))) &&
-        cloaked != 0) {
+    if (owner != NULL || (style & WS_CHILD))
         return false;
-    }
+
+    if ((ex_style & WS_EX_TOPMOST) && !IsManagedWindow(hwnd))
+        return false;
+
+    int cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0)
+        return false;
 
     if ((style & WS_POPUP) && !(style & WS_CAPTION)) {
         RECT rc;
         GetWindowRect(hwnd, &rc);
-        int screen_w = GetSystemMetrics(SM_CXSCREEN);
-        int screen_h = GetSystemMetrics(SM_CYSCREEN);
-        if (rc.left <= 0 && rc.top <= 0 && rc.right >= screen_w &&
-            rc.bottom >= screen_h) {
+        if (rc.left <= 0 && rc.top <= 0 && rc.right >= GetSystemMetrics(SM_CXSCREEN) && rc.bottom >= GetSystemMetrics(SM_CYSCREEN))
             return false;
-        }
     }
 
     if (ex_style & WS_EX_APPWINDOW)
         return true;
 
-    if (owner == NULL && !(style & WS_CHILD)) {
-        RECT rc;
-        GetWindowRect(hwnd, &rc);
-        if ((rc.right - rc.left) > 150 && (rc.bottom - rc.top) > 100) {
-            return true;
-        }
-    }
-
-    return false;
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    return (rc.right - rc.left) > 150 && (rc.bottom - rc.top) > 100;
 }
 
 void RestoreAllWindows() {
     static int offset = 0;
 
-    EnumWindows(
-        [](HWND hwnd, LPARAM lParam) -> BOOL {
-            if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
-                LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
-                if (ex_style & WS_EX_LAYERED) {
-                    SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
-                }
-
-                RECT rc;
-                GetWindowRect(hwnd, &rc);
-                int *off = reinterpret_cast<int *>(lParam);
-
-                if (rc.left < -500 ||
-                    rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
-                    SetWindowPos(
-                        hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700,
-                        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-                    *off = (*off + 30) % 300;
-                } else {
-                    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-                                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-                }
-            }
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || hwnd == g_overlay_hwnd)
             return TRUE;
-        },
-        reinterpret_cast<LPARAM>(&offset));
+
+        DWORD pid;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == GetCurrentProcessId())
+            return TRUE;
+
+        LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+        LONG style = GetWindowLong(hwnd, GWL_STYLE);
+        HWND owner = GetWindow(hwnd, GW_OWNER);
+
+        if (owner != NULL || (style & WS_CHILD) || (ex_style & WS_EX_TOOLWINDOW))
+            return TRUE;
+
+        if (ex_style & WS_EX_LAYERED)
+            SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
+
+        int val = 0;
+        DwmSetWindowAttribute(hwnd, DWMWA_CLOAKED, &val, sizeof(val));
+
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+        int *off = reinterpret_cast<int *>(lParam);
+
+        if (rc.left < -500 || rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700,
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+            *off = (*off + 30) % 300;
+        } else {
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&offset));
 }
 
 BOOL WINAPI ConsoleHandler(DWORD ctrlType) {
@@ -554,7 +508,6 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
 
     bool is_removal =
         (event == EVENT_OBJECT_DESTROY || event == EVENT_SYSTEM_MINIMIZESTART);
-
     if (!is_removal) {
         if (!IsWindowVisible(hwnd) || !IsToplevelWindow(hwnd))
             return;
@@ -662,8 +615,21 @@ int main() {
             g_registered_hotkeys.clear();
         });
 
+        wm.set_function("set_topmost", [](size_t hwnd, bool topmost) {
+            HWND handle = reinterpret_cast<HWND>(hwnd);
+            if (!IsWindow(handle))
+                return;
+            SetWindowPos(handle, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        });
+
         wm.set_function("close_window", [](size_t hwnd) {
-            PostMessage(reinterpret_cast<HWND>(hwnd), WM_CLOSE, 0, 0);
+            HWND handle = reinterpret_cast<HWND>(hwnd);
+            if (!IsWindow(handle))
+                return;
+            SetWindowPos(handle, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            PostMessage(handle, WM_CLOSE, 0, 0);
         });
 
         wm.set_function("get_window_title", [](size_t hwnd) {
@@ -745,8 +711,7 @@ int main() {
             }
         });
 
-        wm.set_function("move_window", [](size_t hwnd, double x, double y,
-                                          double w, double h) {
+        wm.set_function("move_window", [](size_t hwnd, double x, double y, double w, double h) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
                 return;
@@ -754,33 +719,30 @@ int main() {
                 ShowWindow(handle, SW_RESTORE);
 
             if (x < -10000.0) {
-                SetWindowPos(handle, NULL, -20000, -20000, 0, 0,
-                             SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+                SetWindowPos(handle, HWND_NOTOPMOST, -20000, -20000, 0, 0,
+                             SWP_NOSIZE | SWP_NOACTIVATE);
                 return;
             }
 
-            HWND insertAfter = HWND_NOTOPMOST;
+            bool wants_topmost = false;
             if (g_lua) {
                 std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-                if (g_lua) {
-                    sol::protected_function is_f =
-                        (*g_lua)["Quire"]["is_floating"];
-                    if (is_f.valid()) {
-                        auto res = is_f(hwnd);
-                        if (res.valid() && res.get<bool>()) {
-                            insertAfter = HWND_TOPMOST;
-                        }
-                    }
+                sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
+                if (is_f.valid()) {
+                    auto res = is_f(hwnd);
+                    if (res.valid() && res.get<bool>())
+                        wants_topmost = true;
                 }
             }
+
+            HWND insertAfter = wants_topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
+            bool is_currently_topmost = (GetWindowLong(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
 
             RECT windowRect, frameRect;
             GetWindowRect(handle, &windowRect);
 
             int lm = 0, tm = 0, rm = 0, bm = 0;
-            if (SUCCEEDED(DwmGetWindowAttribute(handle,
-                                                DWMWA_EXTENDED_FRAME_BOUNDS,
-                                                &frameRect, sizeof(RECT)))) {
+            if (SUCCEEDED(DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, &frameRect, sizeof(RECT)))) {
                 lm = frameRect.left - windowRect.left;
                 tm = frameRect.top - windowRect.top;
                 rm = windowRect.right - frameRect.right;
@@ -794,17 +756,13 @@ int main() {
             int final_w = static_cast<int>(w) + lm + rm;
             int final_h = static_cast<int>(h) + tm + bm;
 
-            UINT flags = SWP_NOACTIVATE | SWP_NOCOPYBITS;
-            if (insertAfter == HWND_NOTOPMOST) {
+            UINT flags = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_DEFERERASE;
+            if (wants_topmost == is_currently_topmost)
                 flags |= SWP_NOZORDER;
-            }
-            if (std::abs(cur_w - final_w) <= 1 &&
-                std::abs(cur_h - final_h) <= 1) {
+            if (std::abs(cur_w - final_w) <= 1 && std::abs(cur_h - final_h) <= 1)
                 flags |= SWP_NOSIZE;
-            }
 
-            SetWindowPos(handle, insertAfter, final_x, final_y, final_w,
-                         final_h, flags);
+            SetWindowPos(handle, insertAfter, final_x, final_y, final_w, final_h, flags);
         });
 
         wm.set_function("move_to_monitor", [](size_t hwnd_val, int dir) {
@@ -987,11 +945,10 @@ int main() {
                            float r1, float g1, float b1, float a1, float r2,
                            float g2, float b2, float a2, float angle,
                            float th) {
-                            if (g_current_renderer) {
+                            if (g_current_renderer)
                                 g_current_renderer->draw_gradient_rounded_rect(
                                     x, y, w, h, rad, r1, g1, b1, a1, r2, g2, b2,
                                     a2, angle, th);
-                            }
                         });
         ui.set_function("fill_rounded_rect", [](float x, float y, float w,
                                                 float h, float rad, float r,
@@ -1164,6 +1121,7 @@ int main() {
             }
             if (!g_running)
                 break;
+
             bool is_game = IsGameFullscreenActive();
 
             if (is_game) {
@@ -1189,7 +1147,7 @@ int main() {
                 }
             }
 
-            static POINT s_last_mouse_pos = { 0, 0 };
+            static POINT s_last_mouse_pos = {0, 0};
             POINT cur_pt;
             if (GetCursorPos(&cur_pt)) {
                 int dx = std::abs(cur_pt.x - s_last_mouse_pos.x);
@@ -1199,37 +1157,15 @@ int main() {
                     if (g_lua) {
                         std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                         if (g_lua) {
-                            sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_move"];
-                            if (fn.valid()) fn(cur_pt.x, cur_pt.y);
+                            sol::protected_function fn =
+                                (*g_lua)["Quire"]["on_mouse_move"];
+                            if (fn.valid())
+                                fn(cur_pt.x, cur_pt.y);
                         }
                     }
                 }
             }
 
-            if (IsWindowVisible(g_overlay_hwnd)) {
-                g_current_renderer = &g_renderer;
-                g_renderer.begin_draw();
-                g_renderer.clear(0, 0, 0, 0);
-
-                if (g_lua) {
-                    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-                    if (g_lua) {
-                        sol::protected_function render =
-                            (*g_lua)["Quire"]["on_render_overlay"];
-                        if (render.valid()) {
-                            auto res = render();
-                            if (!res.valid()) {
-                                sol::error err = res;
-                                std::cerr
-                                    << "[Quire Render Error]: " << err.what()
-                                    << std::endl;
-                            }
-                        }
-                    }
-                }
-
-                g_renderer.end_draw();
-            }
             int fps = g_target_fps > 0 ? g_target_fps : 100;
             auto frame_duration = std::chrono::nanoseconds(1000000000LL / fps);
 
