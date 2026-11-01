@@ -252,6 +252,46 @@ void Renderer::draw_text(const std::string &text, float x, float y, float size,
     }
 }
 
+void Renderer::draw_line(float x1, float y1, float x2, float y2, float r,
+                         float g, float b, float a, float thickness) {
+    if (!target)
+        return;
+    set_brush_color(r, g, b, a);
+    target->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), brush,
+                     thickness);
+}
+
+void Renderer::draw_circle(float x, float y, float radius, float r, float g,
+                           float b, float a, float thickness) {
+    if (!target)
+        return;
+    set_brush_color(r, g, b, a);
+    D2D1_ELLIPSE el = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
+    target->DrawEllipse(el, brush, thickness);
+}
+
+void Renderer::fill_circle(float x, float y, float radius, float r, float g,
+                           float b, float a) {
+    if (!target)
+        return;
+    set_brush_color(r, g, b, a);
+    D2D1_ELLIPSE el = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
+    target->FillEllipse(el, brush);
+}
+
+void Renderer::push_clip(float x, float y, float w, float h) {
+    if (!target)
+        return;
+    target->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h),
+                                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+}
+
+void Renderer::pop_clip() {
+    if (!target)
+        return;
+    target->PopAxisAlignedClip();
+}
+
 float Renderer::measure_text_width(const std::string &text, float size,
                                    const std::string &fontName) {
     if (!writeFactory || text.empty())

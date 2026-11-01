@@ -297,44 +297,75 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam,
 static HHOOK g_mouse_hook = nullptr;
 
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && g_lua) {
-        auto *ms = reinterpret_cast<MSLLHOOKSTRUCT *>(lParam);
-        float dx = 0.0f;
-        float dy = 0.0f;
-        bool is_wheel = (wParam == WM_MOUSEWHEEL || wParam == WM_MOUSEHWHEEL);
+    if (nCode != HC_ACTION ||
+        (wParam != WM_MOUSEWHEEL && wParam != WM_MOUSEHWHEEL) || !g_lua) {
+        return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
+    }
 
-        if (is_wheel) {
-            short raw = static_cast<short>(HIWORD(ms->mouseData));
-            bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-            bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    auto *ms = reinterpret_cast<MSLLHOOKSTRUCT *>(lParam);
+    float dx = 0.0f;
+    float dy = 0.0f;
+    short raw = static_cast<short>(HIWORD(ms->mouseData));
+    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 
-            if (wParam == WM_MOUSEHWHEEL) {
-                dx = static_cast<float>(raw);
-            } else if (wParam == WM_MOUSEWHEEL) {
-                if (shift || alt) {
-                    dx = static_cast<float>(raw);
-                } else {
-                    dy = static_cast<float>(raw);
-                }
-            }
+    if (wParam == WM_MOUSEHWHEEL) {
+        dx = static_cast<float>(raw);
+    } else if (wParam == WM_MOUSEWHEEL) {
+        if (shift || alt) {
+            dx = static_cast<float>(raw);
+        } else {
+            dy = static_cast<float>(raw);
+        }
+    }
 
-            if (dx != 0.0f || (dy != 0.0f && ctrl)) {
-                std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-                if (g_lua) {
-                    sol::protected_function fn =
-                        (*g_lua)["Quire"]["on_trackpad_scroll"];
-                    if (fn.valid()) {
-                        auto res = fn(dx, dy, ctrl);
-                        if (res.valid() && res.get<bool>()) {
-                            return 1;
-                        }
-                    }
+    if (dx != 0.0f || (dy != 0.0f && ctrl)) {
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+        if (g_lua) {
+            sol::protected_function fn =
+                (*g_lua)["Quire"]["on_trackpad_scroll"];
+            if (fn.valid()) {
+                auto res = fn(dx, dy, ctrl);
+                if (res.valid() && res.get<bool>()) {
+                    return 1;
                 }
             }
         }
     }
+
     return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
+}
+
+bool IsGameFullscreenActive() {
+    HWND fg = GetForegroundWindow();
+    if (!fg || fg == g_overlay_hwnd)
+        return false;
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (pid == GetCurrentProcessId())
+        return false;
+
+    RECT rc;
+    GetWindowRect(fg, &rc);
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+
+    if (rc.left <= 0 && rc.top <= 0 && rc.right >= sw && rc.bottom >= sh) {
+        if (g_lua) {
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+            sol::protected_function is_tiled = (*g_lua)["Quire"]["is_tiled"];
+            if (is_tiled.valid()) {
+                auto res = is_tiled(reinterpret_cast<size_t>(fg));
+                if (res.valid() && res.get<bool>()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 void ConfigWatcherThread(std::string configDir) {
@@ -982,6 +1013,30 @@ int main() {
                 return g_current_renderer->measure_text_width(text, size, font);
             return 0.0f;
         });
+        ui.set_function("draw_line", [](float x1, float y1, float x2, float y2,
+                                        float r, float g, float b, float a,
+                                        float th) {
+            if (g_current_renderer)
+                g_current_renderer->draw_line(x1, y1, x2, y2, r, g, b, a, th);
+        });
+        ui.set_function("draw_circle", [](float x, float y, float rad, float r,
+                                          float g, float b, float a, float th) {
+            if (g_current_renderer)
+                g_current_renderer->draw_circle(x, y, rad, r, g, b, a, th);
+        });
+        ui.set_function("fill_circle", [](float x, float y, float rad, float r,
+                                          float g, float b, float a) {
+            if (g_current_renderer)
+                g_current_renderer->fill_circle(x, y, rad, r, g, b, a);
+        });
+        ui.set_function("push_clip", [](float x, float y, float w, float h) {
+            if (g_current_renderer)
+                g_current_renderer->push_clip(x, y, w, h);
+        });
+        ui.set_function("pop_clip", []() {
+            if (g_current_renderer)
+                g_current_renderer->pop_clip();
+        });
 
         WNDCLASSEXA wc = {sizeof(WNDCLASSEXA),
                           CS_HREDRAW | CS_VREDRAW,
@@ -1003,14 +1058,6 @@ int main() {
             "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0,
             GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), NULL,
             NULL, wc.hInstance, NULL);
-
-        rid[0].dwFlags = RIDEV_INPUTSINK;
-        rid[0].hwndTarget = overlay_hwnd;
-
-        rid[1].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
-        rid[1].usUsage = HID_USAGE_DIGITIZER_TOUCH_PAD;
-        rid[1].dwFlags = RIDEV_INPUTSINK;
-        rid[1].hwndTarget = overlay_hwnd;
 
         g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc,
                                          GetModuleHandleA(NULL), 0);
@@ -1117,7 +1164,72 @@ int main() {
             }
             if (!g_running)
                 break;
+            bool is_game = IsGameFullscreenActive();
 
+            if (is_game) {
+                if (g_mouse_hook) {
+                    UnhookWindowsHookEx(g_mouse_hook);
+                    g_mouse_hook = nullptr;
+                }
+                if (IsWindowVisible(g_overlay_hwnd)) {
+                    ShowWindow(g_overlay_hwnd, SW_HIDE);
+                }
+                Sleep(16);
+                continue;
+            } else {
+                if (!g_mouse_hook) {
+                    g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc,
+                                                     GetModuleHandleA(NULL), 0);
+                }
+                if (!IsWindowVisible(g_overlay_hwnd)) {
+                    ShowWindow(g_overlay_hwnd, SW_SHOW);
+                    SetWindowPos(g_overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                                     SWP_SHOWWINDOW);
+                }
+            }
+
+            static POINT s_last_mouse_pos = { 0, 0 };
+            POINT cur_pt;
+            if (GetCursorPos(&cur_pt)) {
+                int dx = std::abs(cur_pt.x - s_last_mouse_pos.x);
+                int dy = std::abs(cur_pt.y - s_last_mouse_pos.y);
+                if (dx >= 6 || dy >= 6) {
+                    s_last_mouse_pos = cur_pt;
+                    if (g_lua) {
+                        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                        if (g_lua) {
+                            sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_move"];
+                            if (fn.valid()) fn(cur_pt.x, cur_pt.y);
+                        }
+                    }
+                }
+            }
+
+            if (IsWindowVisible(g_overlay_hwnd)) {
+                g_current_renderer = &g_renderer;
+                g_renderer.begin_draw();
+                g_renderer.clear(0, 0, 0, 0);
+
+                if (g_lua) {
+                    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                    if (g_lua) {
+                        sol::protected_function render =
+                            (*g_lua)["Quire"]["on_render_overlay"];
+                        if (render.valid()) {
+                            auto res = render();
+                            if (!res.valid()) {
+                                sol::error err = res;
+                                std::cerr
+                                    << "[Quire Render Error]: " << err.what()
+                                    << std::endl;
+                            }
+                        }
+                    }
+                }
+
+                g_renderer.end_draw();
+            }
             int fps = g_target_fps > 0 ? g_target_fps : 100;
             auto frame_duration = std::chrono::nanoseconds(1000000000LL / fps);
 

@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <windows.h>
 
-
 class Renderer {
   public:
     Renderer();
@@ -41,6 +40,14 @@ class Renderer {
                    const std::string &fontName);
     float measure_text_width(const std::string &text, float size,
                              const std::string &fontName);
+    void draw_line(float x1, float y1, float x2, float y2, float r, float g,
+                   float b, float a, float thickness);
+    void draw_circle(float x, float y, float radius, float r, float g, float b,
+                     float a, float thickness);
+    void fill_circle(float x, float y, float radius, float r, float g, float b,
+                     float a);
+    void push_clip(float x, float y, float w, float h);
+    void pop_clip();
 
   private:
     ID2D1Factory *factory;
