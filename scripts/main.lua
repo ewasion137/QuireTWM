@@ -997,7 +997,7 @@ Quire.on_render_overlay = function()
             local old_ws = get_ws(Quire.animating_ws)
             for _, col in ipairs(old_ws.columns) do
                 for _, hwnd in ipairs(col.windows) do
-                    wm.move_window(hwnd, -20000, -20000, 0, 0)
+                    wm.cloak_window(hwnd, true)
                 end
             end
             Quire.animating_ws = nil
@@ -1006,7 +1006,7 @@ Quire.on_render_overlay = function()
             end
         end
     end
-
+    
     if Quire.animating_ws then
         local old_ws = get_ws(Quire.animating_ws)
         local old_offset_y = math.floor(camera_y) - (Quire.anim_direction * sh)
@@ -1243,12 +1243,11 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down)
             Quire.cycle_workspace(1)
             vert_scroll_accum = 0.0
         end
-        return
+        return true
     end
 
-    local scroll_val = (dx ~= 0.0) and dx or (-dy)
-    if math.abs(scroll_val) < 0.01 then
-        return
+    if math.abs(dx) < 0.01 then
+        return false
     end
 
     local wx, wy, ww, wh = wm.get_work_area()
@@ -1257,36 +1256,15 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down)
     local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
 
     local speed = cfg.trackpad_speed or 1.2
-    camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (scroll_val * speed)))
-    Quire.scroll_active_until = now + 0.40
-
-    local ws = get_ws(Quire.current_workspace)
-    local screen_center = wx + math.floor(ww / 2)
-    local best_hwnd = nil
-    local best_dist = 1e9
-
-    for _, col in ipairs(ws.columns) do
-        if #col.windows > 0 then
-            local hwnd = col.windows[1]
-            local target = Quire.window_targets[hwnd]
-            if target then
-                local win_center = (target.world_x - math.floor(camera_target_x)) + math.floor(target.w / 2)
-                local dist = math.abs(win_center - screen_center)
-                if dist < best_dist then
-                    best_dist = dist
-                    best_hwnd = hwnd
-                end
-            end
-        end
-    end
-
-    if best_hwnd and best_hwnd ~= Quire.focused_window then
-        Quire.focused_window = best_hwnd
-    end
+    camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (dx * speed)))
+    Quire.scroll_active_until = now + 0.16
+    Quire.is_touch_scrolling = true
 
     for _, c in pairs(Quire.window_currents) do
         c.needs_sync = true
     end
+
+    return true
 end
 
 Quire.on_ipc_request = function(req)

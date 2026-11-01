@@ -30,22 +30,23 @@
 #define RI_MOUSE_HWHEEL 0x0800
 #endif
 
-#include "../include/renderer.hpp"
 #include "../include/alttab.hpp"
+#include "../include/renderer.hpp"
+#include <chrono>
 #include <dwmapi.h>
-#include <shellapi.h>
-#include <iostream>
-#include <string>
-#include <windows.h>
 #include <filesystem>
 #include <fstream>
-#include <windowsx.h>
-#include <shlobj.h>
-#include <thread>
-#include <vector>
+#include <iostream>
 #include <mutex>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <string>
+#include <thread>
 #include <timeapi.h>
-#include <chrono>
+#include <vector>
+#include <windows.h>
+#include <windowsx.h>
+
 
 extern "C" {
 #include <lauxlib.h>
@@ -55,7 +56,7 @@ extern "C" {
 
 #include <sol/sol.hpp>
 
-sol::state* g_lua = nullptr;
+sol::state *g_lua = nullptr;
 std::recursive_mutex g_lua_mutex;
 Renderer g_renderer;
 HWND g_overlay_hwnd = NULL;
@@ -65,7 +66,7 @@ NOTIFYICONDATAA g_nid = {};
 bool g_running = true;
 int g_target_fps = 100;
 
-Renderer* g_current_renderer = nullptr;
+Renderer *g_current_renderer = nullptr;
 
 struct AppMenuItem {
     std::string name;
@@ -74,7 +75,7 @@ struct AppMenuItem {
 std::vector<AppMenuItem> g_tray_apps;
 
 struct IPCMessage {
-    const char* request;
+    const char *request;
     std::string response;
 };
 
@@ -83,7 +84,8 @@ void RestoreAllWindows();
 int DetectMonitorRefreshRate() {
     DEVMODEA dm = {};
     dm.dmSize = sizeof(dm);
-    if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1) {
+    if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) &&
+        dm.dmDisplayFrequency > 1) {
         return static_cast<int>(dm.dmDisplayFrequency);
     }
     return 60;
@@ -96,17 +98,20 @@ void UpdateTargetFps() {
         sol::object obj = (*g_lua)["Quire"]["config"]["fps_cap"];
         if (obj.is<int>()) {
             int val = obj.as<int>();
-            if (val > 0) rate = val;
+            if (val > 0)
+                rate = val;
         }
     }
     g_target_fps = rate;
 }
 
 void DispatchTrackpadScroll(float dx, float dy) {
-    if (!g_lua) return;
+    if (!g_lua)
+        return;
     std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
     sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
-    if (fn.valid()) fn(dx, dy);
+    if (fn.valid())
+        fn(dx, dy);
 }
 
 void ShowTrayMenu(HWND hwnd) {
@@ -125,10 +130,12 @@ void ShowTrayMenu(HWND hwnd) {
             for (size_t i = 1; i <= apps.size(); ++i) {
                 sol::table app = apps[i];
                 if (app.valid()) {
-                    std::string name = app["name"].get_or(std::string("Application"));
+                    std::string name =
+                        app["name"].get_or(std::string("Application"));
                     std::string path = app["path"].get_or(std::string(""));
                     g_tray_apps.push_back({name, path});
-                    AppendMenuA(hSubMenu, MF_STRING, ID_TRAY_APP_BASE + i - 1, name.c_str());
+                    AppendMenuA(hSubMenu, MF_STRING, ID_TRAY_APP_BASE + i - 1,
+                                name.c_str());
                 }
             }
         }
@@ -138,17 +145,23 @@ void ShowTrayMenu(HWND hwnd) {
         AppendMenuA(hSubMenu, MF_GRAYED, 0, "No apps configured");
     }
 
-    AppendMenuA(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hSubMenu), "Launcher");
+    AppendMenuA(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hSubMenu),
+                "Launcher");
     AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(hMenu, MF_STRING, ID_TRAY_OPEN_CONFIG, "Open config.lua");
     AppendMenuA(hMenu, MF_STRING, ID_TRAY_RELOAD_CONFIG, "Reload Config");
     AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuA(hMenu, MF_STRING, ID_TRAY_SAVE_SESSION, "Save Window Positions");
-    AppendMenuA(hMenu, MF_STRING, ID_TRAY_RESTORE_SESSION, "Restore Window Positions");
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_SAVE_SESSION,
+                "Save Window Positions");
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_RESTORE_SESSION,
+                "Restore Window Positions");
     AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuA(hMenu, MF_STRING, ID_TRAY_EXIT, "Quit QuireTWM (Restore Windows)");
+    AppendMenuA(hMenu, MF_STRING, ID_TRAY_EXIT,
+                "Quit QuireTWM (Restore Windows)");
 
-    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
+    int cmd =
+        TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                       pt.x, pt.y, 0, hwnd, NULL);
     PostMessageA(hwnd, WM_NULL, 0, 0);
 
     DestroyMenu(hSubMenu);
@@ -166,41 +179,49 @@ void ShowTrayMenu(HWND hwnd) {
         }
     } else if (cmd == ID_TRAY_RELOAD_CONFIG) {
         PostMessageA(hwnd, WM_QUIRE_RELOAD, 0, 0);
-    } else if (cmd >= ID_TRAY_APP_BASE && cmd < ID_TRAY_APP_BASE + static_cast<int>(g_tray_apps.size())) {
+    } else if (cmd >= ID_TRAY_APP_BASE &&
+               cmd < ID_TRAY_APP_BASE + static_cast<int>(g_tray_apps.size())) {
         size_t idx = cmd - ID_TRAY_APP_BASE;
-        ShellExecuteA(NULL, "open", g_tray_apps[idx].path.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        ShellExecuteA(NULL, "open", g_tray_apps[idx].path.c_str(), NULL, NULL,
+                      SW_SHOWNORMAL);
     } else if (cmd == ID_TRAY_SAVE_SESSION) {
         if (g_lua) {
             std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["save_session"];
-            if (fn.valid()) fn();
+            if (fn.valid())
+                fn();
         }
     } else if (cmd == ID_TRAY_RESTORE_SESSION) {
         if (g_lua) {
             std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["restore_session"];
-            if (fn.valid()) fn();
+            if (fn.valid())
+                fn();
         }
     }
 }
 
-LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                LPARAM lParam) {
     switch (msg) {
     case WM_INPUT: {
         HRAWINPUT hRawInput = reinterpret_cast<HRAWINPUT>(lParam);
         RAWINPUT raw = {};
         UINT size = sizeof(raw);
-        if (GetRawInputData(hRawInput, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) > 0) {
+        if (GetRawInputData(hRawInput, RID_INPUT, &raw, &size,
+                            sizeof(RAWINPUTHEADER)) > 0) {
             if (raw.data.mouse.usButtonFlags & RI_MOUSE_HWHEEL) {
                 float dx = 0.0f;
                 float dy = 0.0f;
 
                 if (raw.data.mouse.usButtonFlags & RI_MOUSE_HWHEEL) {
-                    dx = static_cast<float>(static_cast<short>(raw.data.mouse.usButtonData));
+                    dx = static_cast<float>(
+                        static_cast<short>(raw.data.mouse.usButtonData));
                 }
 
                 if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL) {
-                    short wheel_delta = static_cast<short>(raw.data.mouse.usButtonData);
+                    short wheel_delta =
+                        static_cast<short>(raw.data.mouse.usButtonData);
                     bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                     bool alt_down = (GetKeyState(VK_MENU) & 0x8000) != 0;
                     bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -226,25 +247,32 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
     case WM_QUIRE_RELOAD: {
-        if (!g_lua) return 0;
+        if (!g_lua)
+            return 0;
         std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::protected_function fn = (*g_lua)["Quire"]["reload_config"];
-        if (fn.valid()) fn();
+        if (fn.valid())
+            fn();
         UpdateTargetFps();
         return 0;
     }
     case WM_QUIRE_ALTTAB: {
-        if (!g_lua) return 0;
+        if (!g_lua)
+            return 0;
         std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         sol::protected_function fn = (*g_lua)["Quire"]["on_alttab_action"];
         if (fn.valid()) {
-            const char* act = (wParam == 3) ? "cancel" : ((wParam == 2) ? "commit" : ((wParam == 1) ? "prev" : "next"));
+            const char *act =
+                (wParam == 3)
+                    ? "cancel"
+                    : ((wParam == 2) ? "commit"
+                                     : ((wParam == 1) ? "prev" : "next"));
             fn(act);
         }
         return 0;
     }
     case WM_QUIRE_IPC: {
-        auto* ipcm = reinterpret_cast<IPCMessage*>(lParam);
+        auto *ipcm = reinterpret_cast<IPCMessage *>(lParam);
         if (ipcm && g_lua) {
             std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             sol::protected_function fn = (*g_lua)["Quire"]["on_ipc_request"];
@@ -274,27 +302,35 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
         float dx = 0.0f;
         float dy = 0.0f;
+        bool is_wheel = (wParam == WM_MOUSEWHEEL || wParam == WM_MOUSEHWHEEL);
 
-        if (wParam == WM_MOUSEHWHEEL) {
-            dx = static_cast<float>(static_cast<short>(HIWORD(ms->mouseData)));
-        } else if (wParam == WM_MOUSEWHEEL) {
+        if (is_wheel) {
             short raw = static_cast<short>(HIWORD(ms->mouseData));
             bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-
-            if (shift || alt) {
-                dx = static_cast<float>(raw);
-            } else {
-                dy = static_cast<float>(raw);
-            }
-        }
-
-        if (dx != 0.0f || dy != 0.0f) {
             bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-            sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
-            if (fn.valid()) {
-                fn(dx, dy, ctrl);
+
+            if (wParam == WM_MOUSEHWHEEL) {
+                dx = static_cast<float>(raw);
+            } else if (wParam == WM_MOUSEWHEEL) {
+                if (shift || alt) {
+                    dx = static_cast<float>(raw);
+                } else {
+                    dy = static_cast<float>(raw);
+                }
+            }
+
+            if (dx != 0.0f || (dy != 0.0f && ctrl)) {
+                std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                if (g_lua) {
+                    sol::protected_function fn = (*g_lua)["Quire"]["on_trackpad_scroll"];
+                    if (fn.valid()) {
+                        auto res = fn(dx, dy, ctrl);
+                        if (res.valid() && res.get<bool>()) {
+                            return 1;
+                        }
+                    }
+                }
             }
         }
     }
@@ -302,20 +338,19 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 void ConfigWatcherThread(std::string configDir) {
-    HANDLE hDir = CreateFileA(
-        configDir.c_str(), FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
-    );
-    if (hDir == INVALID_HANDLE_VALUE) return;
+    HANDLE hDir =
+        CreateFileA(configDir.c_str(), FILE_LIST_DIRECTORY,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (hDir == INVALID_HANDLE_VALUE)
+        return;
 
     char buffer[1024];
     DWORD bytesReturned;
-    while (ReadDirectoryChangesW(
-        hDir, buffer, sizeof(buffer), FALSE,
-        FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE,
-        &bytesReturned, NULL, NULL)) 
-    {
+    while (ReadDirectoryChangesW(hDir, buffer, sizeof(buffer), FALSE,
+                                 FILE_NOTIFY_CHANGE_LAST_WRITE |
+                                     FILE_NOTIFY_CHANGE_SIZE,
+                                 &bytesReturned, NULL, NULL)) {
         Sleep(150);
         if (g_overlay_hwnd && IsWindow(g_overlay_hwnd)) {
             PostMessageA(g_overlay_hwnd, WM_QUIRE_RELOAD, 0, 0);
@@ -326,35 +361,39 @@ void ConfigWatcherThread(std::string configDir) {
 
 void IPCServerThread() {
     while (g_running) {
-        HANDLE hPipe = CreateNamedPipeA(
-            "\\\\.\\pipe\\quire",
-            PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-            1,
-            2048, 2048, 0, nullptr
-        );
+        HANDLE hPipe =
+            CreateNamedPipeA("\\\\.\\pipe\\quire", PIPE_ACCESS_DUPLEX,
+                             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1,
+                             2048, 2048, 0, nullptr);
 
         if (hPipe == INVALID_HANDLE_VALUE) {
             Sleep(500);
             continue;
         }
 
-        if (ConnectNamedPipe(hPipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED)) {
+        if (ConnectNamedPipe(hPipe, nullptr)
+                ? TRUE
+                : (GetLastError() == ERROR_PIPE_CONNECTED)) {
             char buffer[2048];
             DWORD bytesRead = 0;
-            if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
+            if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead,
+                         nullptr) &&
+                bytesRead > 0) {
                 buffer[bytesRead] = '\0';
                 IPCMessage msg;
                 msg.request = buffer;
 
                 if (g_overlay_hwnd) {
-                    SendMessageA(g_overlay_hwnd, WM_QUIRE_IPC, 0, reinterpret_cast<LPARAM>(&msg));
+                    SendMessageA(g_overlay_hwnd, WM_QUIRE_IPC, 0,
+                                 reinterpret_cast<LPARAM>(&msg));
                 } else {
                     msg.response = "ERROR: Overlay unavailable";
                 }
 
                 DWORD bytesWritten = 0;
-                WriteFile(hPipe, msg.response.data(), static_cast<DWORD>(msg.response.size()), &bytesWritten, nullptr);
+                WriteFile(hPipe, msg.response.data(),
+                          static_cast<DWORD>(msg.response.size()),
+                          &bytesWritten, nullptr);
             }
         }
         DisconnectNamedPipe(hPipe);
@@ -363,23 +402,30 @@ void IPCServerThread() {
 }
 
 bool IsToplevelWindow(HWND hwnd) {
-    if (!IsWindow(hwnd)) return false;
+    if (!IsWindow(hwnd))
+        return false;
 
     DWORD pid;
     GetWindowThreadProcessId(hwnd, &pid);
-    if (pid == GetCurrentProcessId()) return false;
+    if (pid == GetCurrentProcessId())
+        return false;
 
-    if (!IsWindowVisible(hwnd)) return false;
+    if (!IsWindowVisible(hwnd))
+        return false;
 
     LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     HWND owner = GetWindow(hwnd, GW_OWNER);
 
-    if (ex_style & WS_EX_TOPMOST) return false;
-    if (ex_style & WS_EX_TOOLWINDOW) return false;
+    if (ex_style & WS_EX_TOPMOST)
+        return false;
+    if (ex_style & WS_EX_TOOLWINDOW)
+        return false;
 
     int cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
+    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked,
+                                        sizeof(cloaked))) &&
+        cloaked != 0) {
         return false;
     }
 
@@ -388,12 +434,14 @@ bool IsToplevelWindow(HWND hwnd) {
         GetWindowRect(hwnd, &rc);
         int screen_w = GetSystemMetrics(SM_CXSCREEN);
         int screen_h = GetSystemMetrics(SM_CYSCREEN);
-        if (rc.left <= 0 && rc.top <= 0 && rc.right >= screen_w && rc.bottom >= screen_h) {
+        if (rc.left <= 0 && rc.top <= 0 && rc.right >= screen_w &&
+            rc.bottom >= screen_h) {
             return false;
         }
     }
 
-    if (ex_style & WS_EX_APPWINDOW) return true;
+    if (ex_style & WS_EX_APPWINDOW)
+        return true;
 
     if (owner == NULL && !(style & WS_CHILD)) {
         RECT rc;
@@ -409,28 +457,33 @@ bool IsToplevelWindow(HWND hwnd) {
 void RestoreAllWindows() {
     static int offset = 0;
 
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
-            LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
-            if (ex_style & WS_EX_LAYERED) {
-                SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
-            }
+    EnumWindows(
+        [](HWND hwnd, LPARAM lParam) -> BOOL {
+            if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
+                LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+                if (ex_style & WS_EX_LAYERED) {
+                    SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
+                }
 
-            RECT rc;
-            GetWindowRect(hwnd, &rc);
-            int* off = reinterpret_cast<int*>(lParam);
+                RECT rc;
+                GetWindowRect(hwnd, &rc);
+                int *off = reinterpret_cast<int *>(lParam);
 
-            if (rc.left < -500 || rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
-                SetWindowPos(hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700, 
-                             SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-                *off = (*off + 30) % 300;
-            } else {
-                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+                if (rc.left < -500 ||
+                    rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
+                    SetWindowPos(
+                        hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                    *off = (*off + 30) % 300;
+                } else {
+                    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+                }
             }
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&offset));
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&offset));
 }
 
 BOOL WINAPI ConsoleHandler(DWORD ctrlType) {
@@ -441,15 +494,19 @@ BOOL WINAPI ConsoleHandler(DWORD ctrlType) {
 void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
                            LONG idObject, LONG idChild, DWORD dwEventThread,
                            DWORD dwmsEventTime) {
-    if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF || hwnd == nullptr) return;
-    if (event == 0x800B || event == 0x800A) return;
+    if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF || hwnd == nullptr)
+        return;
+    if (event == 0x800B || event == 0x800A)
+        return;
 
     HWND root = GetAncestor(hwnd, GA_ROOT);
-    if (root != hwnd) return;
+    if (root != hwnd)
+        return;
 
     if (event == EVENT_SYSTEM_MOVESIZESTART) {
         LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
-        if (ex_style & WS_EX_TOPMOST) return;
+        if (ex_style & WS_EX_TOPMOST)
+            return;
 
         if (g_lua) {
             std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
@@ -464,10 +521,12 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
         return;
     }
 
-    bool is_removal = (event == EVENT_OBJECT_DESTROY || event == EVENT_SYSTEM_MINIMIZESTART);
+    bool is_removal =
+        (event == EVENT_OBJECT_DESTROY || event == EVENT_SYSTEM_MINIMIZESTART);
 
     if (!is_removal) {
-        if (!IsWindowVisible(hwnd) || !IsToplevelWindow(hwnd)) return;
+        if (!IsWindowVisible(hwnd) || !IsToplevelWindow(hwnd))
+            return;
     }
 
     if (g_lua) {
@@ -475,9 +534,11 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
         GetWindowTextA(hwnd, title, sizeof(title));
 
         std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-        sol::protected_function dispatcher = (*g_lua)["Quire"]["dispatch_event"];
+        sol::protected_function dispatcher =
+            (*g_lua)["Quire"]["dispatch_event"];
         if (dispatcher.valid()) {
-            dispatcher(event, reinterpret_cast<size_t>(hwnd), std::string(title));
+            dispatcher(event, reinterpret_cast<size_t>(hwnd),
+                       std::string(title));
         }
     }
 }
@@ -510,7 +571,8 @@ int main() {
         g_lua = &lua;
 
         lua.open_libraries(sol::lib::base, sol::lib::package, sol::lib::string,
-                           sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::io, sol::lib::debug);
+                           sol::lib::math, sol::lib::table, sol::lib::os,
+                           sol::lib::io, sol::lib::debug);
 
         lua["os"]["execute"] = sol::nil;
         lua["os"]["remove"] = sol::nil;
@@ -527,16 +589,19 @@ int main() {
 
         wm.set_function("get_class_name", [](size_t hwnd) {
             char class_name[256] = {0};
-            GetClassNameA(reinterpret_cast<HWND>(hwnd), class_name, sizeof(class_name));
+            GetClassNameA(reinterpret_cast<HWND>(hwnd), class_name,
+                          sizeof(class_name));
             return std::string(class_name);
         });
 
         wm.set_function("get_process_name", [](size_t hwnd) {
             DWORD pid = 0;
             GetWindowThreadProcessId(reinterpret_cast<HWND>(hwnd), &pid);
-            if (pid == 0) return std::string("");
+            if (pid == 0)
+                return std::string("");
 
-            HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            HANDLE hProcess =
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
             if (hProcess) {
                 char path[MAX_PATH];
                 DWORD size = MAX_PATH;
@@ -585,21 +650,26 @@ int main() {
         });
 
         wm.set_function("spawn", [](std::string command) {
-            ShellExecuteA(NULL, "open", command.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            ShellExecuteA(NULL, "open", command.c_str(), NULL, NULL,
+                          SW_SHOWNORMAL);
         });
 
         wm.set_function("focus_window", [](size_t hwnd) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
-            if (!IsWindow(handle)) return;
+            if (!IsWindow(handle))
+                return;
 
-            if (IsIconic(handle)) ShowWindow(handle, SW_RESTORE);
-            else ShowWindow(handle, SW_SHOW);
+            if (IsIconic(handle))
+                ShowWindow(handle, SW_RESTORE);
+            else
+                ShowWindow(handle, SW_SHOW);
 
             HWND fg = GetForegroundWindow();
             DWORD fgThread = GetWindowThreadProcessId(fg, NULL);
             DWORD currentThread = GetCurrentThreadId();
 
-            SystemParametersInfo(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, (LPVOID)0, SPIF_SENDCHANGE);
+            SystemParametersInfo(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, (LPVOID)0,
+                                 SPIF_SENDCHANGE);
 
             if (fgThread != currentThread && fgThread != 0) {
                 AttachThreadInput(currentThread, fgThread, TRUE);
@@ -618,34 +688,43 @@ int main() {
 
         wm.set_function("set_window_opacity", [](size_t hwnd, double opacity) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
-            if (!IsWindow(handle)) return;
+            if (!IsWindow(handle))
+                return;
 
             LONG ex_style = GetWindowLong(handle, GWL_EXSTYLE);
 
             if (opacity >= 0.999) {
                 if (ex_style & WS_EX_LAYERED) {
-                    SetWindowLong(handle, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
+                    SetWindowLong(handle, GWL_EXSTYLE,
+                                  ex_style & ~WS_EX_LAYERED);
                     SetWindowPos(handle, NULL, 0, 0, 0, 0,
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                                     SWP_FRAMECHANGED);
                 }
             } else {
                 if (!(ex_style & WS_EX_LAYERED)) {
-                    SetWindowLong(handle, GWL_EXSTYLE, ex_style | WS_EX_LAYERED);
+                    SetWindowLong(handle, GWL_EXSTYLE,
+                                  ex_style | WS_EX_LAYERED);
                     SetWindowPos(handle, NULL, 0, 0, 0, 0,
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                                     SWP_FRAMECHANGED);
                 }
                 BYTE alpha = static_cast<BYTE>(opacity * 255.0);
                 SetLayeredWindowAttributes(handle, 0, alpha, LWA_ALPHA);
             }
         });
 
-        wm.set_function("move_window", [](size_t hwnd, double x, double y, double w, double h) {
+        wm.set_function("move_window", [](size_t hwnd, double x, double y,
+                                          double w, double h) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
-            if (!IsWindow(handle)) return;
-            if (IsZoomed(handle)) ShowWindow(handle, SW_RESTORE);
+            if (!IsWindow(handle))
+                return;
+            if (IsZoomed(handle))
+                ShowWindow(handle, SW_RESTORE);
 
             if (x < -10000.0) {
-                SetWindowPos(handle, NULL, -20000, -20000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+                SetWindowPos(handle, NULL, -20000, -20000, 0, 0,
+                             SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
                 return;
             }
 
@@ -653,7 +732,8 @@ int main() {
             if (g_lua) {
                 std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                 if (g_lua) {
-                    sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
+                    sol::protected_function is_f =
+                        (*g_lua)["Quire"]["is_floating"];
                     if (is_f.valid()) {
                         auto res = is_f(hwnd);
                         if (res.valid() && res.get<bool>()) {
@@ -667,7 +747,9 @@ int main() {
             GetWindowRect(handle, &windowRect);
 
             int lm = 0, tm = 0, rm = 0, bm = 0;
-            if (SUCCEEDED(DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, &frameRect, sizeof(RECT)))) {
+            if (SUCCEEDED(DwmGetWindowAttribute(handle,
+                                                DWMWA_EXTENDED_FRAME_BOUNDS,
+                                                &frameRect, sizeof(RECT)))) {
                 lm = frameRect.left - windowRect.left;
                 tm = frameRect.top - windowRect.top;
                 rm = windowRect.right - frameRect.right;
@@ -685,16 +767,19 @@ int main() {
             if (insertAfter == HWND_NOTOPMOST) {
                 flags |= SWP_NOZORDER;
             }
-            if (std::abs(cur_w - final_w) <= 1 && std::abs(cur_h - final_h) <= 1) {
+            if (std::abs(cur_w - final_w) <= 1 &&
+                std::abs(cur_h - final_h) <= 1) {
                 flags |= SWP_NOSIZE;
             }
 
-            SetWindowPos(handle, insertAfter, final_x, final_y, final_w, final_h, flags);
+            SetWindowPos(handle, insertAfter, final_x, final_y, final_w,
+                         final_h, flags);
         });
 
         wm.set_function("move_to_monitor", [](size_t hwnd_val, int dir) {
             HWND hwnd = reinterpret_cast<HWND>(hwnd_val);
-            if (!IsWindow(hwnd)) return;
+            if (!IsWindow(hwnd))
+                return;
 
             struct MonData {
                 HMONITOR handle;
@@ -702,18 +787,23 @@ int main() {
             };
             std::vector<MonData> mons;
 
-            EnumDisplayMonitors(NULL, NULL, [](HMONITOR hMon, HDC, LPRECT, LPARAM lp) -> BOOL {
-                auto* list = reinterpret_cast<std::vector<MonData>*>(lp);
-                MONITORINFO mi = { sizeof(MONITORINFO) };
-                if (GetMonitorInfoA(hMon, &mi)) {
-                    list->push_back({ hMon, mi.rcWork });
-                }
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&mons));
+            EnumDisplayMonitors(
+                NULL, NULL,
+                [](HMONITOR hMon, HDC, LPRECT, LPARAM lp) -> BOOL {
+                    auto *list = reinterpret_cast<std::vector<MonData> *>(lp);
+                    MONITORINFO mi = {sizeof(MONITORINFO)};
+                    if (GetMonitorInfoA(hMon, &mi)) {
+                        list->push_back({hMon, mi.rcWork});
+                    }
+                    return TRUE;
+                },
+                reinterpret_cast<LPARAM>(&mons));
 
-            if (mons.size() <= 1) return;
+            if (mons.size() <= 1)
+                return;
 
-            HMONITOR currentMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            HMONITOR currentMon =
+                MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
             int currentIdx = 0;
             for (size_t i = 0; i < mons.size(); ++i) {
                 if (mons[i].handle == currentMon) {
@@ -722,7 +812,8 @@ int main() {
                 }
             }
 
-            int targetIdx = (currentIdx + dir + static_cast<int>(mons.size())) % static_cast<int>(mons.size());
+            int targetIdx = (currentIdx + dir + static_cast<int>(mons.size())) %
+                            static_cast<int>(mons.size());
             RECT src = mons[currentIdx].rc;
             RECT dst = mons[targetIdx].rc;
 
@@ -731,19 +822,22 @@ int main() {
             int rel_x = wnd.left - src.left;
             int rel_y = wnd.top - src.top;
 
-            SetWindowPos(hwnd, HWND_NOTOPMOST, dst.left + rel_x, dst.top + rel_y, 0, 0,
-                         SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            SetWindowPos(
+                hwnd, HWND_NOTOPMOST, dst.left + rel_x, dst.top + rel_y, 0, 0,
+                SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
         });
 
         wm.set_function("get_screen_size", []() {
-            return std::make_pair(GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+            return std::make_pair(GetSystemMetrics(SM_CXSCREEN),
+                                  GetSystemMetrics(SM_CYSCREEN));
         });
 
         wm.set_function("get_work_area", []() {
             RECT rc;
             if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &rc, 0)) {
-                APPBARDATA abd = { sizeof(APPBARDATA) };
-                UINT state = static_cast<UINT>(SHAppBarMessage(ABM_GETSTATE, &abd));
+                APPBARDATA abd = {sizeof(APPBARDATA)};
+                UINT state =
+                    static_cast<UINT>(SHAppBarMessage(ABM_GETSTATE, &abd));
                 bool isAutoHide = (state & ABS_AUTOHIDE) != 0;
 
                 if (isAutoHide) {
@@ -758,33 +852,40 @@ int main() {
                     }
                 }
 
-                return std::make_tuple(
-                    static_cast<int>(rc.left),
-                    static_cast<int>(rc.top),
-                    static_cast<int>(rc.right - rc.left),
-                    static_cast<int>(rc.bottom - rc.top)
-                );
+                return std::make_tuple(static_cast<int>(rc.left),
+                                       static_cast<int>(rc.top),
+                                       static_cast<int>(rc.right - rc.left),
+                                       static_cast<int>(rc.bottom - rc.top));
             }
-            return std::make_tuple(0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+            return std::make_tuple(0, 0, GetSystemMetrics(SM_CXSCREEN),
+                                   GetSystemMetrics(SM_CYSCREEN));
         });
 
         wm.set_function("get_window_rect", [](size_t hwnd) {
             RECT rect = {0};
-            if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(RECT)))) {
-                return std::make_tuple(static_cast<int>(rect.left), static_cast<int>(rect.top),
-                                       static_cast<int>(rect.right - rect.left),
-                                       static_cast<int>(rect.bottom - rect.top));
+            if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd),
+                                                DWMWA_EXTENDED_FRAME_BOUNDS,
+                                                &rect, sizeof(RECT)))) {
+                return std::make_tuple(
+                    static_cast<int>(rect.left), static_cast<int>(rect.top),
+                    static_cast<int>(rect.right - rect.left),
+                    static_cast<int>(rect.bottom - rect.top));
             }
             GetWindowRect(reinterpret_cast<HWND>(hwnd), &rect);
-            return std::make_tuple(static_cast<int>(rect.left), static_cast<int>(rect.top),
+            return std::make_tuple(static_cast<int>(rect.left),
+                                   static_cast<int>(rect.top),
                                    static_cast<int>(rect.right - rect.left),
                                    static_cast<int>(rect.bottom - rect.top));
         });
 
         wm.set_function("is_window_visible", [](size_t hwnd) {
-            if (!IsWindowVisible(reinterpret_cast<HWND>(hwnd))) return false;
+            if (!IsWindowVisible(reinterpret_cast<HWND>(hwnd)))
+                return false;
             int cloaked = 0;
-            if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
+            if (SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(hwnd),
+                                                DWMWA_CLOAKED, &cloaked,
+                                                sizeof(cloaked))) &&
+                cloaked != 0) {
                 return false;
             }
             return true;
@@ -801,64 +902,97 @@ int main() {
         });
 
         wm.set_function("cloak_window", [](size_t hwnd, bool cloak) {
-    int val = cloak ? 1 : 0;
-    DwmSetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_CLOAKED, &val, sizeof(val));
-});
+            int val = cloak ? 1 : 0;
+            DwmSetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_CLOAKED,
+                                  &val, sizeof(val));
+        });
 
         wm.set_function("enumerate_windows", []() {
             std::vector<size_t> hwnds;
-            EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-                auto* list = reinterpret_cast<std::vector<size_t>*>(lParam);
-                if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
-                    int cloaked = 0;
-                    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
-                        return TRUE;
+            EnumWindows(
+                [](HWND hwnd, LPARAM lParam) -> BOOL {
+                    auto *list =
+                        reinterpret_cast<std::vector<size_t> *>(lParam);
+                    if (IsWindowVisible(hwnd) && IsToplevelWindow(hwnd)) {
+                        int cloaked = 0;
+                        if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED,
+                                                            &cloaked,
+                                                            sizeof(cloaked))) &&
+                            cloaked != 0) {
+                            return TRUE;
+                        }
+                        list->push_back(reinterpret_cast<size_t>(hwnd));
                     }
-                    list->push_back(reinterpret_cast<size_t>(hwnd));
-                }
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&hwnds));
+                    return TRUE;
+                },
+                reinterpret_cast<LPARAM>(&hwnds));
             return hwnds;
         });
 
-        wm.set_function("get_config_path", [configPath]() {
-            return configPath;
-        });
+        wm.set_function("get_config_path",
+                        [configPath]() { return configPath; });
 
         auto ui = lua.create_named_table("ui");
-        ui.set_function("draw_rect", [](float x, float y, float w, float h, float r, float g, float b, float a, float th) {
-            if (g_current_renderer) g_current_renderer->draw_rect(x, y, w, h, r, g, b, a, th);
+        ui.set_function("draw_rect", [](float x, float y, float w, float h,
+                                        float r, float g, float b, float a,
+                                        float th) {
+            if (g_current_renderer)
+                g_current_renderer->draw_rect(x, y, w, h, r, g, b, a, th);
         });
-        ui.set_function("fill_rect", [](float x, float y, float w, float h, float r, float g, float b, float a) {
-            if (g_current_renderer) g_current_renderer->fill_rect(x, y, w, h, r, g, b, a);
+        ui.set_function("fill_rect", [](float x, float y, float w, float h,
+                                        float r, float g, float b, float a) {
+            if (g_current_renderer)
+                g_current_renderer->fill_rect(x, y, w, h, r, g, b, a);
         });
-        ui.set_function("draw_rounded_rect", [](float x, float y, float w, float h, float rad, float r, float g, float b, float a, float th) {
-            if (g_current_renderer) g_current_renderer->draw_rounded_rect(x, y, w, h, rad, r, g, b, a, th);
+        ui.set_function("draw_rounded_rect",
+                        [](float x, float y, float w, float h, float rad,
+                           float r, float g, float b, float a, float th) {
+                            if (g_current_renderer)
+                                g_current_renderer->draw_rounded_rect(
+                                    x, y, w, h, rad, r, g, b, a, th);
+                        });
+        ui.set_function("fill_rounded_rect", [](float x, float y, float w,
+                                                float h, float rad, float r,
+                                                float g, float b, float a) {
+            if (g_current_renderer)
+                g_current_renderer->fill_rounded_rect(x, y, w, h, rad, r, g, b,
+                                                      a);
         });
-        ui.set_function("fill_rounded_rect", [](float x, float y, float w, float h, float rad, float r, float g, float b, float a) {
-            if (g_current_renderer) g_current_renderer->fill_rounded_rect(x, y, w, h, rad, r, g, b, a);
+        ui.set_function("draw_text", [](std::string text, float x, float y,
+                                        float size, float r, float g, float b,
+                                        float a, std::string font) {
+            if (g_current_renderer)
+                g_current_renderer->draw_text(text, x, y, size, r, g, b, a,
+                                              font);
         });
-        ui.set_function("draw_text", [](std::string text, float x, float y, float size, float r, float g, float b, float a, std::string font) {
-            if (g_current_renderer) g_current_renderer->draw_text(text, x, y, size, r, g, b, a, font);
-        });
-        ui.set_function("measure_text", [](std::string text, float size, std::string font) {
-            if (g_current_renderer) return g_current_renderer->measure_text_width(text, size, font);
+        ui.set_function("measure_text", [](std::string text, float size,
+                                           std::string font) {
+            if (g_current_renderer)
+                return g_current_renderer->measure_text_width(text, size, font);
             return 0.0f;
         });
 
-        WNDCLASSEXA wc = {sizeof(WNDCLASSEXA), CS_HREDRAW | CS_VREDRAW, OverlayWndProc, 0, 0,
-                          GetModuleHandle(NULL), NULL, NULL, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)),
-                          NULL, "QuireOverlay", NULL};
+        WNDCLASSEXA wc = {sizeof(WNDCLASSEXA),
+                          CS_HREDRAW | CS_VREDRAW,
+                          OverlayWndProc,
+                          0,
+                          0,
+                          GetModuleHandle(NULL),
+                          NULL,
+                          NULL,
+                          reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)),
+                          NULL,
+                          "QuireOverlay",
+                          NULL};
         RegisterClassExA(&wc);
 
         HWND overlay_hwnd = CreateWindowExA(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN),
-            GetSystemMetrics(SM_CYSCREEN), NULL, NULL, wc.hInstance, NULL);
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED |
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0,
+            GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), NULL,
+            NULL, wc.hInstance, NULL);
 
-        RAWINPUTDEVICE rid[2] = {};
-        rid[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
-        rid[0].usUsage = HID_USAGE_GENERIC_MOUSE;
         rid[0].dwFlags = RIDEV_INPUTSINK;
         rid[0].hwndTarget = overlay_hwnd;
 
@@ -867,9 +1001,8 @@ int main() {
         rid[1].dwFlags = RIDEV_INPUTSINK;
         rid[1].hwndTarget = overlay_hwnd;
 
-        RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE));
-
-        g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc, GetModuleHandleA(NULL), 0);
+        g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc,
+                                         GetModuleHandleA(NULL), 0);
         g_overlay_hwnd = overlay_hwnd;
         SetLayeredWindowAttributes(overlay_hwnd, 0, 255, LWA_ALPHA);
 
@@ -882,15 +1015,18 @@ int main() {
         }
 
         ShowWindow(overlay_hwnd, SW_SHOW);
-        SetWindowPos(overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
         g_nid.cbSize = sizeof(NOTIFYICONDATAA);
         g_nid.hWnd = overlay_hwnd;
         g_nid.uID = 1;
         g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         g_nid.uCallbackMessage = WM_QUIRE_TRAY;
-        g_nid.hIcon = reinterpret_cast<HICON>(LoadImageA(GetModuleHandle(NULL), MAKEINTRESOURCEA(1), IMAGE_ICON, 
-            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+        g_nid.hIcon = reinterpret_cast<HICON>(
+            LoadImageA(GetModuleHandle(NULL), MAKEINTRESOURCEA(1), IMAGE_ICON,
+                       GetSystemMetrics(SM_CXSMICON),
+                       GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
         if (!g_nid.hIcon) {
             g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
         }
@@ -903,7 +1039,8 @@ int main() {
         std::string exe_dir = path.substr(0, path.find_last_of("\\/"));
         std::string script_path = exe_dir + "\\scripts\\main.lua";
 
-        std::cout << "Quire: Loading core engine from " << script_path << std::endl;
+        std::cout << "Quire: Loading core engine from " << script_path
+                  << std::endl;
 
         sol::protected_function_result result = lua.script_file(script_path);
         if (!result.valid()) {
@@ -914,17 +1051,22 @@ int main() {
 
         UpdateTargetFps();
 
-        HWINEVENTHOOK hook_objects = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_NAMECHANGE, NULL,
-                                                    WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-        HWINEVENTHOOK hook_focus = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, NULL,
-                                                  WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-        HWINEVENTHOOK hook_minimize = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND,
-                                                    NULL, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-        HWINEVENTHOOK hook_movesize = SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND,
-                                                    NULL, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        HWINEVENTHOOK hook_objects =
+            SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_NAMECHANGE, NULL,
+                            WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        HWINEVENTHOOK hook_focus =
+            SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+                            NULL, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        HWINEVENTHOOK hook_minimize = SetWinEventHook(
+            EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, NULL,
+            WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        HWINEVENTHOOK hook_movesize = SetWinEventHook(
+            EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND, NULL,
+            WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
 
         if (!hook_objects || !hook_focus || !hook_minimize || !hook_movesize) {
-            std::cerr << "Quire: Failed to register WinEventHooks!" << std::endl;
+            std::cerr << "Quire: Failed to register WinEventHooks!"
+                      << std::endl;
             return 1;
         }
 
@@ -946,12 +1088,15 @@ int main() {
                 if (msg.message == WM_HOTKEY) {
                     std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                     if (g_lua) {
-                        sol::protected_function on_hotkey = (*g_lua)["Quire"]["on_hotkey"];
+                        sol::protected_function on_hotkey =
+                            (*g_lua)["Quire"]["on_hotkey"];
                         if (on_hotkey.valid()) {
                             auto res = on_hotkey(static_cast<int>(msg.wParam));
                             if (!res.valid()) {
                                 sol::error err = res;
-                                std::cerr << "[Quire Hotkey Error]: " << err.what() << std::endl;
+                                std::cerr
+                                    << "[Quire Hotkey Error]: " << err.what()
+                                    << std::endl;
                             }
                         }
                     }
@@ -959,7 +1104,8 @@ int main() {
                 TranslateMessage(&msg);
                 DispatchMessageA(&msg);
             }
-            if (!g_running) break;
+            if (!g_running)
+                break;
 
             int fps = g_target_fps > 0 ? g_target_fps : 100;
             auto frame_duration = std::chrono::nanoseconds(1000000000LL / fps);
@@ -984,12 +1130,15 @@ int main() {
                 if (g_lua) {
                     std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
                     if (g_lua) {
-                        sol::protected_function render = (*g_lua)["Quire"]["on_render_overlay"];
+                        sol::protected_function render =
+                            (*g_lua)["Quire"]["on_render_overlay"];
                         if (render.valid()) {
                             auto res = render();
                             if (!res.valid()) {
                                 sol::error err = res;
-                                std::cerr << "[Quire Render Error]: " << err.what() << std::endl;
+                                std::cerr
+                                    << "[Quire Render Error]: " << err.what()
+                                    << std::endl;
                             }
                         }
                     }
@@ -1009,7 +1158,8 @@ int main() {
         UnhookWinEvent(hook_focus);
         UnhookWinEvent(hook_minimize);
         UnhookWinEvent(hook_movesize);
-        if (g_mouse_hook) UnhookWindowsHookEx(g_mouse_hook);
+        if (g_mouse_hook)
+            UnhookWindowsHookEx(g_mouse_hook);
         CleanupAltTabHook();
         RestoreAllWindows();
 
@@ -1022,7 +1172,7 @@ int main() {
         g_renderer.shutdown();
         g_current_renderer = nullptr;
 
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "FATAL: " << e.what() << std::endl;
         {
             std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
