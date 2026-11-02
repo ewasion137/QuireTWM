@@ -280,8 +280,7 @@ function Quire.retile()
 
     local is_scrolling = get_wall_time() < (Quire.scroll_active_until or 0.0)
 
-    if not is_scrolling and not Quire.overview_active and Quire.focused_window and
-        not Quire.floating_windows[Quire.focused_window] then
+    if not is_scrolling and Quire.focused_window and not Quire.floating_windows[Quire.focused_window] then
         local target = Quire.window_targets[Quire.focused_window]
         if target then
             camera_target_x = (target.world_x - wx) - math.floor((ww - target.w) / 2)
@@ -309,7 +308,7 @@ function Quire.toggle_scratchpad()
     local fg = wm.get_foreground_window()
     local current = (fg and fg ~= 0) and fg or Quire.focused_window
 
-    if not Quire.scratchpad_hwnd or not wm.is_window_visible(Quire.scratchpad_hwnd) then
+    if not Quire.scratchpad_hwnd or not wm.is_window(Quire.scratchpad_hwnd) then
         if current and current ~= Quire.scratchpad_hwnd then
             Quire.scratchpad_prev_focus = current
         end
@@ -324,11 +323,14 @@ function Quire.toggle_scratchpad()
             Quire.scratchpad_prev_focus = current
         end
         wm.cloak_window(Quire.scratchpad_hwnd, false)
+        if wm.set_topmost then
+            wm.set_topmost(Quire.scratchpad_hwnd, true)
+        end
         wm.focus_window(Quire.scratchpad_hwnd)
         Quire.focused_window = Quire.scratchpad_hwnd
     else
         local target = Quire.scratchpad_prev_focus
-        if target and wm.is_window_visible(target) and not Quire.closing_windows[target] then
+        if target and wm.is_window(target) and not Quire.closing_windows[target] then
             Quire.focused_window = target
             wm.focus_window(target)
         else
@@ -336,7 +338,7 @@ function Quire.toggle_scratchpad()
             local fallback = nil
             for _, col in ipairs(ws.columns) do
                 for _, w in ipairs(col.windows) do
-                    if wm.is_window_visible(w) then
+                    if wm.is_window(w) then
                         fallback = w
                         break
                     end
@@ -354,7 +356,9 @@ end
 
 function Quire.mark_scratchpad()
     local fg = wm.get_foreground_window()
-    local focused = (fg and fg ~= 0 and (fg == Quire.scratchpad_hwnd or Quire.find_window_pos(fg) or Quire.floating_windows[fg])) and fg or Quire.focused_window
+    local focused = (fg and fg ~= 0 and
+                        (fg == Quire.scratchpad_hwnd or Quire.find_window_pos(fg) or Quire.floating_windows[fg])) and fg or
+                        Quire.focused_window
     if not focused then
         return
     end
@@ -420,11 +424,42 @@ Quire.on_mouse_move = function(mx, my)
     if not Quire.config.focus_follows_mouse or Quire.overview_active then
         return
     end
+
+    if Quire.focused_window then
+        if Quire.floating_windows[Quire.focused_window] or Quire.focused_window == Quire.scratchpad_hwnd then
+            return
+        end
+    end
+
     if math.abs(camera_x - camera_target_x) > 1.0 then
         return
     end
     if get_wall_time() < (Quire.scroll_active_until or 0.0) then
         return
+    end
+
+    if Quire.scratchpad_hwnd and Quire.scratchpad_visible and wm.is_window(Quire.scratchpad_hwnd) then
+        local rx, ry, rw, rh = wm.get_window_rect(Quire.scratchpad_hwnd)
+        if mx >= rx and mx <= (rx + rw) and my >= ry and my <= (ry + rh) then
+            if Quire.scratchpad_hwnd ~= Quire.focused_window then
+                Quire.focused_window = Quire.scratchpad_hwnd
+                wm.focus_window(Quire.scratchpad_hwnd)
+            end
+            return
+        end
+    end
+
+    for hwnd, _ in pairs(Quire.floating_windows) do
+        if wm.is_window(hwnd) then
+            local rx, ry, rw, rh = wm.get_window_rect(hwnd)
+            if mx >= rx and mx <= (rx + rw) and my >= ry and my <= (ry + rh) then
+                if hwnd ~= Quire.focused_window then
+                    Quire.focused_window = hwnd
+                    wm.focus_window(hwnd)
+                end
+                return
+            end
+        end
     end
 
     local ws = get_ws(Quire.current_workspace)
@@ -931,7 +966,9 @@ end
 
 function Quire.toggle_floating()
     local fg = wm.get_foreground_window()
-    local focused = (fg and fg ~= 0 and (fg == Quire.scratchpad_hwnd or Quire.find_window_pos(fg) or Quire.floating_windows[fg])) and fg or Quire.focused_window
+    local focused = (fg and fg ~= 0 and
+                        (fg == Quire.scratchpad_hwnd or Quire.find_window_pos(fg) or Quire.floating_windows[fg])) and fg or
+                        Quire.focused_window
     if not focused then
         return
     end
@@ -975,7 +1012,6 @@ function Quire.toggle_floating()
         Quire.retile()
     else
         local col_idx, row_idx, ws = Quire.find_window_pos(focused)
-        local cur_x, cur_y, cur_w, cur_h = wm.get_window_rect(focused)
         if col_idx then
             table.remove(ws.columns[col_idx].windows, row_idx)
             if #ws.columns[col_idx].windows == 0 then
@@ -985,9 +1021,7 @@ function Quire.toggle_floating()
 
         Quire.floating_windows[focused] = true
         Quire.window_targets[focused] = nil
-        if wm.set_topmost then
-            wm.set_topmost(focused, true)
-        end
+        Quire.window_currents[focused] = nil
 
         local fw = math.floor(ww * 0.60)
         local fh = math.floor(wh * 0.70)
@@ -995,20 +1029,13 @@ function Quire.toggle_floating()
         local fy = wy + math.floor((wh - fh) / 2)
 
         Quire.floating_rects[focused] = {fx, fy, fw, fh}
-
-        local curr = Quire.window_currents[focused] or {
-            x = cur_x,
-            y = cur_y,
-            w = cur_w,
-            h = cur_h,
-            vx = 0,
-            vy = 0,
-            vw = 0,
-            vh = 0
-        }
-        curr.x, curr.y, curr.w, curr.h = cur_x, cur_y, cur_w, cur_h
-        curr.needs_sync = true
-        Quire.window_currents[focused] = curr
+        wm.move_window(focused, fx, fy, fw, fh)
+        if wm.set_topmost then
+            wm.set_topmost(focused, true)
+        end
+        wm.focus_window(focused)
+        Quire.focused_window = focused
+        Quire.retile()
     end
     trigger_hud()
 end
@@ -1279,11 +1306,7 @@ Quire.on_render_overlay = function()
     local cam_floor_x = math.floor(camera_x)
     local cam_floor_y = math.floor(camera_y)
 
-    local target_zoom = 1.0
-    if Quire.overview_active then
-        local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
-        target_zoom = math.min(0.65, math.max(0.25, (ww - 60) / math.max(1, total_w)))
-    end
+    local target_zoom = Quire.overview_active and 0.72 or 1.0
     Quire.overview_zoom = Quire.overview_zoom + (target_zoom - Quire.overview_zoom) * math.min(1.0, dt * 14.0)
     local is_zooming = math.abs(Quire.overview_zoom - 1.0) > 0.002
 
@@ -1557,10 +1580,10 @@ end
 
 local vert_scroll_accum = 0.0
 
-Quire.on_trackpad_scroll = function(dx, dy, ctrl_down)
+Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
     local now = get_wall_time()
 
-    if ctrl_down then
+    if (ctrl_down and alt_down) or ctrl_down then
         if (now - last_scroll_time) > 0.35 then
             vert_scroll_accum = 0.0
         end
@@ -1569,26 +1592,40 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down)
         local delta = (dy ~= 0.0) and dy or dx
         vert_scroll_accum = vert_scroll_accum + delta
 
-        if vert_scroll_accum >= 160.0 then
+        if vert_scroll_accum >= 80.0 then
             Quire.cycle_workspace(-1)
             vert_scroll_accum = 0.0
-        elseif vert_scroll_accum <= -160.0 then
+            return true
+        elseif vert_scroll_accum <= -80.0 then
             Quire.cycle_workspace(1)
             vert_scroll_accum = 0.0
+            return true
         end
         return true
     end
 
     vert_scroll_accum = 0.0
 
-    if math.abs(dx) < 0.01 then
-        return false
-    end
-
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
     local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
     local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
+
+    if Quire.overview_active then
+        local scroll_step = (math.abs(dx) > 0.01) and dx or -dy
+        local speed = cfg.trackpad_speed or 1.2
+        camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (scroll_step * speed)))
+        Quire.scroll_active_until = now + 0.20
+        Quire.is_touch_scrolling = true
+        for _, c in pairs(Quire.window_currents) do
+            c.needs_sync = true
+        end
+        return true
+    end
+
+    if math.abs(dx) < 0.01 then
+        return false
+    end
 
     local speed = cfg.trackpad_speed or 1.2
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (dx * speed)))

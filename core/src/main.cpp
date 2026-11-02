@@ -250,27 +250,28 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     float dx = 0.0f;
     float dy = 0.0f;
     short raw = static_cast<short>(HIWORD(ms->mouseData));
-    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-    bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 
     if (wParam == WM_MOUSEHWHEEL) {
         dx = static_cast<float>(raw);
     } else if (wParam == WM_MOUSEWHEEL) {
-        if (shift || alt) {
+        if (shift) {
             dx = static_cast<float>(raw);
         } else {
             dy = static_cast<float>(raw);
         }
     }
 
-    if (dx != 0.0f || (dy != 0.0f && ctrl)) {
+    if (dx != 0.0f || dy != 0.0f) {
         std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
         if (g_lua) {
             sol::protected_function fn =
                 (*g_lua)["Quire"]["on_trackpad_scroll"];
             if (fn.valid()) {
-                auto res = fn(dx, dy, ctrl);
+                auto res = fn(dx, dy, ctrl, alt);
                 if (res.valid() && res.get<bool>()) {
                     return 1;
                 }
@@ -412,13 +413,17 @@ bool IsToplevelWindow(HWND hwnd) {
         return false;
 
     int cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0)
+    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked,
+                                        sizeof(cloaked))) &&
+        cloaked != 0)
         return false;
 
     if ((style & WS_POPUP) && !(style & WS_CAPTION)) {
         RECT rc;
         GetWindowRect(hwnd, &rc);
-        if (rc.left <= 0 && rc.top <= 0 && rc.right >= GetSystemMetrics(SM_CXSCREEN) && rc.bottom >= GetSystemMetrics(SM_CYSCREEN))
+        if (rc.left <= 0 && rc.top <= 0 &&
+            rc.right >= GetSystemMetrics(SM_CXSCREEN) &&
+            rc.bottom >= GetSystemMetrics(SM_CYSCREEN))
             return false;
     }
 
@@ -433,42 +438,49 @@ bool IsToplevelWindow(HWND hwnd) {
 void RestoreAllWindows() {
     static int offset = 0;
 
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || hwnd == g_overlay_hwnd)
+    EnumWindows(
+        [](HWND hwnd, LPARAM lParam) -> BOOL {
+            if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) ||
+                hwnd == g_overlay_hwnd)
+                return TRUE;
+
+            DWORD pid;
+            GetWindowThreadProcessId(hwnd, &pid);
+            if (pid == GetCurrentProcessId())
+                return TRUE;
+
+            LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+            LONG style = GetWindowLong(hwnd, GWL_STYLE);
+            HWND owner = GetWindow(hwnd, GW_OWNER);
+
+            if (owner != NULL || (style & WS_CHILD) ||
+                (ex_style & WS_EX_TOOLWINDOW))
+                return TRUE;
+
+            if (ex_style & WS_EX_LAYERED)
+                SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
+
+            int val = 0;
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAKED, &val, sizeof(val));
+
+            RECT rc;
+            GetWindowRect(hwnd, &rc);
+            int *off = reinterpret_cast<int *>(lParam);
+
+            if (rc.left < -500 ||
+                rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
+                SetWindowPos(
+                    hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                *off = (*off + 30) % 300;
+            } else {
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            }
             return TRUE;
-
-        DWORD pid;
-        GetWindowThreadProcessId(hwnd, &pid);
-        if (pid == GetCurrentProcessId())
-            return TRUE;
-
-        LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
-        LONG style = GetWindowLong(hwnd, GWL_STYLE);
-        HWND owner = GetWindow(hwnd, GW_OWNER);
-
-        if (owner != NULL || (style & WS_CHILD) || (ex_style & WS_EX_TOOLWINDOW))
-            return TRUE;
-
-        if (ex_style & WS_EX_LAYERED)
-            SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
-
-        int val = 0;
-        DwmSetWindowAttribute(hwnd, DWMWA_CLOAKED, &val, sizeof(val));
-
-        RECT rc;
-        GetWindowRect(hwnd, &rc);
-        int *off = reinterpret_cast<int *>(lParam);
-
-        if (rc.left < -500 || rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
-            SetWindowPos(hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700,
-                         SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-            *off = (*off + 30) % 300;
-        } else {
-            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&offset));
+        },
+        reinterpret_cast<LPARAM>(&offset));
 }
 
 BOOL WINAPI ConsoleHandler(DWORD ctrlType) {
@@ -540,6 +552,7 @@ std::string GetConfigDirectory() {
 }
 
 int main() {
+    SystemParametersInfoA(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, NULL, 0);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     timeBeginPeriod(1);
@@ -619,8 +632,9 @@ int main() {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
                 return;
-            SetWindowPos(handle, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            SetWindowPos(
+                handle, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         });
 
         wm.set_function("close_window", [](size_t hwnd) {
@@ -628,7 +642,8 @@ int main() {
             if (!IsWindow(handle))
                 return;
             SetWindowPos(handle, HWND_NOTOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                             SWP_FRAMECHANGED);
             PostMessage(handle, WM_CLOSE, 0, 0);
         });
 
@@ -658,28 +673,22 @@ int main() {
 
             if (IsIconic(handle))
                 ShowWindow(handle, SW_RESTORE);
-            else
-                ShowWindow(handle, SW_SHOW);
 
             HWND fg = GetForegroundWindow();
+            if (fg == handle)
+                return;
+
             DWORD fgThread = GetWindowThreadProcessId(fg, NULL);
             DWORD currentThread = GetCurrentThreadId();
-
-            SystemParametersInfo(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, (LPVOID)0,
-                                 SPIF_SENDCHANGE);
 
             if (fgThread != currentThread && fgThread != 0) {
                 AttachThreadInput(currentThread, fgThread, TRUE);
                 SetForegroundWindow(handle);
                 BringWindowToTop(handle);
-                SetActiveWindow(handle);
-                SetFocus(handle);
                 AttachThreadInput(currentThread, fgThread, FALSE);
             } else {
                 SetForegroundWindow(handle);
                 BringWindowToTop(handle);
-                SetActiveWindow(handle);
-                SetFocus(handle);
             }
         });
 
@@ -711,7 +720,8 @@ int main() {
             }
         });
 
-        wm.set_function("move_window", [](size_t hwnd, double x, double y, double w, double h) {
+        wm.set_function("move_window", [](size_t hwnd, double x, double y,
+                                          double w, double h) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
                 return;
@@ -736,33 +746,53 @@ int main() {
             }
 
             HWND insertAfter = wants_topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
-            bool is_currently_topmost = (GetWindowLong(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+            bool is_currently_topmost =
+                (GetWindowLong(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
 
-            RECT windowRect, frameRect;
+            RECT windowRect;
             GetWindowRect(handle, &windowRect);
 
+            static RECT frameRect;
             int lm = 0, tm = 0, rm = 0, bm = 0;
-            if (SUCCEEDED(DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, &frameRect, sizeof(RECT)))) {
+            if (SUCCEEDED(DwmGetWindowAttribute(handle,
+                                                DWMWA_EXTENDED_FRAME_BOUNDS,
+                                                &frameRect, sizeof(RECT)))) {
                 lm = frameRect.left - windowRect.left;
                 tm = frameRect.top - windowRect.top;
                 rm = windowRect.right - frameRect.right;
                 bm = windowRect.bottom - frameRect.bottom;
             }
 
-            int cur_w = windowRect.right - windowRect.left;
-            int cur_h = windowRect.bottom - windowRect.top;
+            int cur_x = windowRect.left + lm;
+            int cur_y = windowRect.top + tm;
+            int cur_w = (windowRect.right - windowRect.left) - lm - rm;
+            int cur_h = (windowRect.bottom - windowRect.top) - tm - bm;
+
             int final_x = static_cast<int>(x) - lm;
             int final_y = static_cast<int>(y) - tm;
             int final_w = static_cast<int>(w) + lm + rm;
             int final_h = static_cast<int>(h) + tm + bm;
 
             UINT flags = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_DEFERERASE;
-            if (wants_topmost == is_currently_topmost)
+            bool same_zorder = (wants_topmost == is_currently_topmost);
+            if (same_zorder)
                 flags |= SWP_NOZORDER;
-            if (std::abs(cur_w - final_w) <= 1 && std::abs(cur_h - final_h) <= 1)
+
+            bool same_size = (std::abs(cur_w - static_cast<int>(w)) <= 1 &&
+                              std::abs(cur_h - static_cast<int>(h)) <= 1);
+            if (same_size)
                 flags |= SWP_NOSIZE;
 
-            SetWindowPos(handle, insertAfter, final_x, final_y, final_w, final_h, flags);
+            bool same_pos = (std::abs(cur_x - static_cast<int>(x)) <= 1 &&
+                             std::abs(cur_y - static_cast<int>(y)) <= 1);
+            if (same_pos)
+                flags |= SWP_NOMOVE;
+
+            if (same_zorder && same_size && same_pos)
+                return;
+
+            SetWindowPos(handle, insertAfter, final_x, final_y, final_w,
+                         final_h, flags);
         });
 
         wm.set_function("move_to_monitor", [](size_t hwnd_val, int dir) {
@@ -884,6 +914,9 @@ int main() {
         wm.set_function("get_time", []() {
             auto now = std::chrono::steady_clock::now();
             return std::chrono::duration<double>(now - s_start_time).count();
+        });
+        wm.set_function("is_window", [](size_t hwnd) {
+            return static_cast<bool>(IsWindow(reinterpret_cast<HWND>(hwnd)));
         });
 
         wm.set_function("is_minimized", [](size_t hwnd) {
