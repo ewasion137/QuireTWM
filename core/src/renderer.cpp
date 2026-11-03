@@ -40,18 +40,12 @@ IDWriteTextFormat *Renderer::get_cached_text_format(const std::wstring &font,
 }
 
 Renderer::Renderer()
-    : factory(nullptr), target(nullptr), brush(nullptr), writeFactory(nullptr) {
-}
+    : hwnd_target(nullptr), factory(nullptr), target(nullptr), brush(nullptr),
+      writeFactory(nullptr) {}
 
 Renderer::~Renderer() { shutdown(); }
 
-void Renderer::shutdown() {
-    for (auto &[_, fmt] : font_cache) {
-        if (fmt)
-            fmt->Release();
-    }
-    font_cache.clear();
-
+void Renderer::release_target_resources() {
     if (brush) {
         brush->Release();
         brush = nullptr;
@@ -60,6 +54,17 @@ void Renderer::shutdown() {
         target->Release();
         target = nullptr;
     }
+}
+
+void Renderer::shutdown() {
+    for (auto &[_, fmt] : font_cache) {
+        if (fmt)
+            fmt->Release();
+    }
+    font_cache.clear();
+
+    release_target_resources();
+
     if (writeFactory) {
         writeFactory->Release();
         writeFactory = nullptr;
@@ -68,11 +73,14 @@ void Renderer::shutdown() {
         factory->Release();
         factory = nullptr;
     }
+    hwnd_target = nullptr;
 }
 
 bool Renderer::init(HWND hwnd) {
     if (!IsWindow(hwnd))
         return false;
+
+    hwnd_target = hwnd;
 
     if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
                                              &factory))) {
@@ -92,27 +100,29 @@ bool Renderer::init(HWND hwnd) {
         D2D1::SizeU((rc.right - rc.left > 0) ? (rc.right - rc.left) : 1,
                     (rc.bottom - rc.top > 0) ? (rc.bottom - rc.top) : 1);
 
-    if (brush) {
-        brush->Release();
-        brush = nullptr;
-    }
+    release_target_resources();
 
-    if (target) {
-        target->Release();
-        target = nullptr;
-    }
-
-    return SUCCEEDED(factory->CreateHwndRenderTarget(
+    HRESULT hr = factory->CreateHwndRenderTarget(
         D2D1::RenderTargetProperties(
             D2D1_RENDER_TARGET_TYPE_DEFAULT,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-                              D2D1_ALPHA_MODE_PREMULTIPLIED)),
+                              D2D1_ALPHA_MODE_PREMULTIPLIED),
+            96.0f, 96.0f),
         D2D1::HwndRenderTargetProperties(hwnd, size,
                                          D2D1_PRESENT_OPTIONS_IMMEDIATELY),
-        &target));
+        &target);
+
+    if (SUCCEEDED(hr) && target) {
+        target->SetDpi(96.0f, 96.0f);
+        return true;
+    }
+    return false;
 }
 
 void Renderer::begin_draw() {
+    if (!target && hwnd_target && IsWindow(hwnd_target)) {
+        init(hwnd_target);
+    }
     if (target)
         target->BeginDraw();
 }
@@ -120,13 +130,9 @@ void Renderer::begin_draw() {
 void Renderer::end_draw() {
     if (!target)
         return;
-    if (target->EndDraw() == D2DERR_RECREATE_TARGET) {
-        if (brush) {
-            brush->Release();
-            brush = nullptr;
-        }
-        target->Release();
-        target = nullptr;
+    HRESULT hr = target->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET || FAILED(hr)) {
+        release_target_resources();
     }
 }
 

@@ -50,12 +50,14 @@ class Renderer {
     void pop_clip();
 
   private:
+    HWND hwnd_target;
     ID2D1Factory *factory;
     ID2D1HwndRenderTarget *target;
     ID2D1SolidColorBrush *brush;
     IDWriteFactory *writeFactory;
     std::unordered_map<std::wstring, IDWriteTextFormat *> font_cache;
 
+    void release_target_resources();
     void set_brush_color(float r, float g, float b, float a);
     IDWriteTextFormat *get_cached_text_format(const std::wstring &font,
                                               float size);

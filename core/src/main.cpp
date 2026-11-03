@@ -233,6 +233,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam,
         }
         return 1;
     }
+    case WM_DISPLAYCHANGE:
+    case WM_DPICHANGED: {
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        SetWindowPos(hwnd, HWND_TOPMOST, vx, vy, vw, vh, SWP_NOACTIVATE);
+        g_renderer.init(hwnd);
+        return 0;
+    }
     default:
         return DefWindowProcA(hwnd, msg, wParam, lParam);
     }
@@ -1042,12 +1052,18 @@ int main() {
                           NULL};
         RegisterClassExA(&wc);
 
-        HWND overlay_hwnd = CreateWindowExA(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED |
-                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            "QuireOverlay", "QuireOverlay", WS_POPUP, 0, 0,
-            GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), NULL,
-            NULL, wc.hInstance, NULL);
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        HWND overlay_hwnd =
+            CreateWindowExA(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED |
+                                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                            "QuireOverlay", "QuireOverlay", WS_POPUP, vx, vy,
+                            (vw > 0 ? vw : GetSystemMetrics(SM_CXSCREEN)),
+                            (vh > 0 ? vh : GetSystemMetrics(SM_CYSCREEN)), NULL,
+                            NULL, wc.hInstance, NULL);
 
         g_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseProc,
                                          GetModuleHandleA(NULL), 0);
