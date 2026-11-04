@@ -42,7 +42,9 @@ Quire.config = {
         stiffness = 160,
         damping = 22,
         mass = 1.0
-    }
+    },
+    smart_gaps = true,
+    smart_borders = false
 }
 
 Quire.current_workspace = 1
@@ -202,35 +204,44 @@ end
 
 local function layout_columns(ws_id, wx, wy, ww, wh, cfg)
     local ws = get_ws(ws_id)
-    local base_x = wx + cfg.gaps_out
-    local base_y = wy + cfg.gaps_out
-    local avail_w = ww - (cfg.gaps_out * 2)
-    local avail_h = wh - (cfg.gaps_out * 2)
-
-    local cur_x = base_x
-
-    for _, col in ipairs(ws.columns) do
-        local col_w = (col.width >= 0.99) and avail_w or math.floor((avail_w - cfg.gaps_in) * col.width)
-        local n_rows = #col.windows
-        if n_rows > 0 then
-            local total_gap_y = cfg.gaps_in * (n_rows - 1)
-            local row_h = math.floor((avail_h - total_gap_y) / n_rows)
-
-            local cur_y = base_y
-            for row_idx, hwnd in ipairs(col.windows) do
-                local h = (row_idx == n_rows) and (base_y + avail_h - cur_y) or row_h
-                Quire.window_targets[hwnd] = {
-                    world_x = cur_x,
-                    y = cur_y,
-                    w = col_w,
-                    h = math.max(10, h)
-                }
-                cur_y = cur_y + h + cfg.gaps_in
-            end
-            cur_x = cur_x + col_w + cfg.gaps_in
-        end
+    local cols = ws.columns
+    if #cols == 0 then
+        return 0
     end
-    return cur_x, avail_w
+
+    local is_smart = cfg.smart_gaps and (#cols == 1 and #cols[1].windows == 1) and not Quire.overview_active
+    local gaps_in = is_smart and 0 or cfg.gaps_in
+    local gaps_out = is_smart and 0 or cfg.gaps_out
+
+    local avail_w = ww - (gaps_out * 2)
+    local avail_h = wh - (gaps_out * 2)
+
+    local cur_x = wx + gaps_out
+
+    for c_idx, col in ipairs(cols) do
+        local col_w = is_smart and avail_w or math.floor(avail_w * (col.width or cfg.default_column_width))
+        local num_wins = #col.windows
+        local total_gap_h = (num_wins - 1) * gaps_in
+        local win_h = math.floor((avail_h - total_gap_h) / math.max(1, num_wins))
+
+        local cur_y = wy + gaps_out
+        for r_idx, hwnd in ipairs(col.windows) do
+            local h = win_h
+            if r_idx == num_wins then
+                h = (wy + gaps_out + avail_h) - cur_y
+            end
+
+            Quire.window_targets[hwnd] = {
+                world_x = cur_x,
+                y = cur_y,
+                w = col_w,
+                h = h
+            }
+            cur_y = cur_y + h + gaps_in
+        end
+        cur_x = cur_x + col_w + gaps_in
+    end
+    return cur_x - gaps_in + gaps_out
 end
 
 function Quire.retile()
@@ -343,7 +354,9 @@ function Quire.toggle_scratchpad()
                         break
                     end
                 end
-                if fallback then break end
+                if fallback then
+                    break
+                end
             end
             Quire.focused_window = fallback
             if fallback then
@@ -1423,6 +1436,9 @@ Quire.on_render_overlay = function()
     end
 
     if not fg_covers_screen then
+        local is_smart = cfg.smart_gaps and (#ws.columns == 1 and #ws.columns[1].windows == 1) and not Quire.overview_active
+        local win_rounding = is_smart and 0 or math.floor(cfg.rounding * Quire.overview_zoom)
+
         for _, col in ipairs(ws.columns) do
             for _, hwnd in ipairs(col.windows) do
                 if not Quire.closing_windows[hwnd] and not Quire.transferring_windows[hwnd] then
@@ -1442,8 +1458,8 @@ Quire.on_render_overlay = function()
                             title = wm.get_window_title(hwnd),
                             class = wm.get_class_name(hwnd),
                             process = wm.get_process_name and wm.get_process_name(hwnd) or "",
-                            rounding = math.floor(cfg.rounding * Quire.overview_zoom),
-                            thickness = cfg.border_size
+                            rounding = win_rounding,
+                            thickness = (is_smart and cfg.smart_borders) and 0 or cfg.border_size
                         }
 
                         local handled = false
@@ -1454,14 +1470,14 @@ Quire.on_render_overlay = function()
                             end
                         end
 
-                        if not handled then
+                        if not handled and win_ctx.thickness > 0 then
                             local col_color = is_active and cfg.border_active or cfg.border_inactive
                             local offset_x, offset_y = 0, 0
                             if is_active and anims.idle[cfg.idle_mode] then
                                 col_color, offset_x, offset_y = anims.idle[cfg.idle_mode](now, col_color)
                             end
                             ui.draw_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding, col_color[1],
-                                col_color[2], col_color[3], col_color[4] or 1.0, cfg.border_size)
+                                col_color[2], col_color[3], col_color[4] or 1.0, win_ctx.thickness)
                         end
                     end
                 end
