@@ -9,7 +9,11 @@
 
 Inspired by scrollable Wayland compositors like Niri, QuireTWM replaces rigid grid splits with an infinite horizontal ribbon. The screen acts as a moving camera tracking your focused column, backed by sub-stepped numerical spring physics.
 
-https://github.com/user-attachments/assets/782fd7da-b258-4ee8-b321-5c79d84c64f7
+
+
+https://github.com/user-attachments/assets/00785434-d0ec-4fad-85f7-1e6bf287b8f2
+
+
 
 ---
 
