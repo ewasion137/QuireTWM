@@ -600,6 +600,7 @@ local function add_window(hwnd, title, class)
         Quire.floating_windows[hwnd] = true
         Quire.scratchpad_hwnd = hwnd
         Quire.scratchpad_visible = true
+        if wm.track_window then wm.track_window(hwnd) end
         trigger_hud()
         return
     end
@@ -608,6 +609,7 @@ local function add_window(hwnd, title, class)
         return
     end
     if apply_rules(hwnd, title, class) then
+        if wm.track_window then wm.track_window(hwnd) end
         return
     end
 
@@ -630,6 +632,8 @@ local function add_window(hwnd, title, class)
         table.insert(ws.columns, new_col)
     end
 
+    if wm.track_window then wm.track_window(hwnd) end
+
     Quire.window_ws[hwnd] = Quire.current_workspace
     Quire.focused_window = hwnd
     if Quire.hooks.on_window_open then
@@ -642,6 +646,10 @@ end
 local function remove_window(hwnd, is_destroy)
     if wm.set_topmost then
         wm.set_topmost(hwnd, false)
+    end
+
+    if is_destroy and wm.untrack_window then
+        wm.untrack_window(hwnd)
     end
 
     local was_scratchpad = (hwnd == Quire.scratchpad_hwnd)
@@ -1892,6 +1900,9 @@ for _, hwnd in ipairs(existing) do
                 windows = {hwnd}
             })
             Quire.window_ws[hwnd] = 1
+            if wm.track_window then wm.track_window(hwnd) end
+        else
+            if wm.track_window then wm.track_window(hwnd) end
         end
     end
 end
