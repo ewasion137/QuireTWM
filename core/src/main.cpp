@@ -445,16 +445,27 @@ bool IsToplevelWindow(HWND hwnd) {
     return (rc.right - rc.left) > 150 && (rc.bottom - rc.top) > 100;
 }
 
+void CallLuaExitCleanup() {
+    if (g_lua) {
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+        sol::protected_function fn = (*g_lua)["Quire"]["cleanup_for_exit"];
+        if (fn.valid()) {
+            fn();
+        }
+    }
+}
+
 void RestoreAllWindows() {
     static int offset = 0;
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
 
     EnumWindows(
         [](HWND hwnd, LPARAM lParam) -> BOOL {
-            if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) ||
-                hwnd == g_overlay_hwnd)
+            if (!IsWindow(hwnd) || hwnd == g_overlay_hwnd)
                 return TRUE;
 
-            DWORD pid;
+            DWORD pid = 0;
             GetWindowThreadProcessId(hwnd, &pid);
             if (pid == GetCurrentProcessId())
                 return TRUE;
@@ -463,26 +474,39 @@ void RestoreAllWindows() {
             LONG style = GetWindowLong(hwnd, GWL_STYLE);
             HWND owner = GetWindow(hwnd, GW_OWNER);
 
-            if (owner != NULL || (style & WS_CHILD) ||
-                (ex_style & WS_EX_TOOLWINDOW))
+            if (owner != NULL || (style & WS_CHILD) || (ex_style & WS_EX_TOOLWINDOW))
                 return TRUE;
 
             if (ex_style & WS_EX_LAYERED)
                 SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
 
-            int val = 0;
-            DwmSetWindowAttribute(hwnd, DWMWA_CLOAKED, &val, sizeof(val));
+            BOOL false_val = FALSE;
+            DwmSetWindowAttribute(hwnd, 13, &false_val, sizeof(false_val));
+            int zero = 0;
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAKED, &zero, sizeof(zero));
 
-            RECT rc;
+            ShowWindow(hwnd, SW_SHOWNA);
+
+            RECT rc = {0};
             GetWindowRect(hwnd, &rc);
             int *off = reinterpret_cast<int *>(lParam);
 
-            if (rc.left < -500 ||
-                rc.left > GetSystemMetrics(SM_CXSCREEN) + 500) {
+            int cur_w = rc.right - rc.left;
+            int cur_h = rc.bottom - rc.top;
+
+            int screen_w = GetSystemMetrics(SM_CXSCREEN);
+            int screen_h = GetSystemMetrics(SM_CYSCREEN);
+
+            bool is_offscreen = (rc.left < -50 || rc.top < -50 ||
+                                 rc.left >= screen_w || rc.top >= screen_h ||
+                                 rc.right <= 50 || rc.bottom <= 50 ||
+                                 cur_w < 150 || cur_h < 100);
+
+            if (is_offscreen) {
                 SetWindowPos(
                     hwnd, HWND_NOTOPMOST, 100 + *off, 100 + *off, 1100, 700,
                     SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-                *off = (*off + 30) % 300;
+                *off = (*off + 35) % 350;
             } else {
                 SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
@@ -1007,6 +1031,21 @@ int main() {
                 g_current_renderer->draw_text(text, x, y, size, r, g, b, a,
                                               font);
         });
+        ui.set_function("draw_shadow_rounded_rect",
+                        [](float x, float y, float w, float h, float rad,
+                           float r, float g, float b, float a, float blur, float spread) {
+                            if (g_current_renderer)
+                                g_current_renderer->draw_shadow_rounded_rect(
+                                    x, y, w, h, rad, r, g, b, a, blur, spread);
+                        });
+
+        ui.set_function("draw_glow_rounded_rect",
+                        [](float x, float y, float w, float h, float rad,
+                           float r, float g, float b, float a, float intensity, float spread) {
+                            if (g_current_renderer)
+                                g_current_renderer->draw_glow_rounded_rect(
+                                    x, y, w, h, rad, r, g, b, a, intensity, spread);
+                        });
         ui.set_function("measure_text", [](std::string text, float size,
                                            std::string font) {
             if (g_current_renderer)
