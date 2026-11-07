@@ -870,7 +870,7 @@ end
 
 function Quire.cycle_column_preset()
     local col_idx, _, ws = Quire.find_window_pos(Quire.focused_window)
-    if not col_idx then
+    if not col_idx or not ws or not ws.columns or not ws.columns[col_idx] then
         return
     end
     local col = ws.columns[col_idx]
@@ -971,7 +971,7 @@ end
 
 function Quire.move_column(dir)
     local col_idx, _, ws = Quire.find_window_pos(Quire.focused_window)
-    if not col_idx then
+    if not col_idx or not ws or not ws.columns or not ws.columns[col_idx] then
         return
     end
 
@@ -1184,16 +1184,28 @@ local function draw_hud(sw, sh, dt)
     local cur_ratio = 1.0
 
     if Quire.focused_window then
-        local c = Quire.find_window_pos(Quire.focused_window)
-        if c then
+        local c, _, win_ws = Quire.find_window_pos(Quire.focused_window)
+        if c and win_ws == ws and ws.columns and ws.columns[c] then
             cur_col_idx = c
-            cur_ratio = ws.columns[c].width
+            cur_ratio = ws.columns[c].width or 1.0
+        end
+    end
+
+    if not ws.columns or #ws.columns == 0 then
+        cur_col_idx = 0
+        cur_ratio = 1.0
+    else
+        cur_col_idx = math.max(1, math.min(#ws.columns, cur_col_idx))
+        if ws.columns[cur_col_idx] and ws.columns[cur_col_idx].width then
+            cur_ratio = ws.columns[cur_col_idx].width
         end
     end
 
     local dots = {}
-    for i = 1, #ws.columns do
-        table.insert(dots, (i == cur_col_idx) and "[*]" or "[ ]")
+    if ws.columns then
+        for i = 1, #ws.columns do
+            table.insert(dots, (i == cur_col_idx) and "[*]" or "[ ]")
+        end
     end
     local ribbon_str = (#dots > 0) and table.concat(dots, " ") or "EMPTY"
     local pct_str = math.floor(cur_ratio * 100) .. "%"
