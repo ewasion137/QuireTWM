@@ -9,7 +9,16 @@ local anim_cx = 0.0
 local live_thumbnails = {}
 
 local function is_valid(hwnd)
-    return hwnd and wm.is_window(hwnd) and wm.is_window_visible(hwnd)
+    if not hwnd or hwnd == 0 or hwnd == g_overlay_hwnd then
+        return false
+    end
+    if not wm.is_window(hwnd) then
+        return false
+    end
+    if Quire.closing_windows and Quire.closing_windows[hwnd] then
+        return false
+    end
+    return true
 end
 
 function alttab.record_focus(hwnd)
@@ -68,7 +77,32 @@ local function rebuild_list()
         end
     end
 
-    local all_wins = wm.enumerate_windows()
+    for ws_id, ws in pairs(Quire.workspaces) do
+        if ws.columns then
+            for _, col in ipairs(ws.columns) do
+                for _, hwnd in ipairs(col.windows) do
+                    if is_valid(hwnd) and not seen[hwnd] then
+                        seen[hwnd] = true
+                        table.insert(Quire.alttab_items, get_window_meta(hwnd))
+                    end
+                end
+            end
+        end
+    end
+
+    for hwnd, _ in pairs(Quire.floating_windows) do
+        if is_valid(hwnd) and not seen[hwnd] then
+            seen[hwnd] = true
+            table.insert(Quire.alttab_items, get_window_meta(hwnd))
+        end
+    end
+
+    if Quire.scratchpad_hwnd and is_valid(Quire.scratchpad_hwnd) and not seen[Quire.scratchpad_hwnd] then
+        seen[Quire.scratchpad_hwnd] = true
+        table.insert(Quire.alttab_items, get_window_meta(Quire.scratchpad_hwnd))
+    end
+
+    local all_wins = wm.enumerate_windows and wm.enumerate_windows() or {}
     for _, hwnd in ipairs(all_wins) do
         if not seen[hwnd] and is_valid(hwnd) then
             seen[hwnd] = true
@@ -129,6 +163,27 @@ function alttab.action(action_type)
     end
 end
 
+local function truncate_utf8(str, max_w, font, size)
+    if ui.measure_text(str, size, font) <= max_w then
+        return str
+    end
+    local len = utf8.len(str)
+    if not len then
+        return str
+    end
+    while len > 1 do
+        len = len - 1
+        local byte_offset = utf8.offset(str, len + 1)
+        if byte_offset then
+            local candidate = str:sub(1, byte_offset - 1) .. "..."
+            if ui.measure_text(candidate, size, font) <= max_w then
+                return candidate
+            end
+        end
+    end
+    return "..."
+end
+
 function alttab.draw()
     if not Quire.alttab_active then
         cleanup_all_thumbnails()
@@ -147,10 +202,11 @@ function alttab.draw()
 
     ui.fill_rect(0, 0, sw, sh, 0.02, 0.02, 0.04, 0.65)
 
-    local max_visible = math.min(count, 7)
-    local card_w = 260
-    local card_h = 200
-    local gap_x = 18
+    local card_w = 230
+    local card_h = 180
+    local gap_x = 16
+
+    local max_visible = math.min(count, math.max(3, math.floor((sw - 120) / (card_w + gap_x))))
 
     local total_w = (max_visible * card_w) + ((max_visible - 1) * gap_x)
     local start_x = math.floor((sw - total_w) / 2)
@@ -189,10 +245,10 @@ function alttab.draw()
             ui.draw_rounded_rect(cx, cy, card_w, card_h, t.rounding, t.border_color[1], t.border_color[2],
                 t.border_color[3], is_sel and 0.5 or 0.25, 1.0)
 
-            local thumb_x = cx + 12
-            local thumb_y = cy + 40
-            local thumb_w = card_w - 24
-            local thumb_h = card_h - 78
+            local thumb_x = cx + 10
+            local thumb_y = cy + 36
+            local thumb_w = card_w - 20
+            local thumb_h = card_h - 68
 
             ui.fill_rounded_rect(thumb_x, thumb_y, thumb_w, thumb_h, 6, 0.03, 0.03, 0.05, 0.90)
 
@@ -213,22 +269,15 @@ function alttab.draw()
                 end
             end
 
-            ui.draw_text(item.proc, cx + 14, cy + 12, 11, accent[1], accent[2], accent[3], 1.0, t.font_family)
+            ui.draw_text(item.proc, cx + 12, cy + 10, 11, accent[1], accent[2], accent[3], 1.0, t.font_family)
 
-            local badge_w = ui.measure_text(item.badge, 9, t.font_family) + 12
-            local badge_x = cx + card_w - badge_w - 12
-            ui.fill_rounded_rect(badge_x, cy + 10, badge_w, 18, 4, 0.14, 0.16, 0.22, 0.90)
-            ui.draw_text(item.badge, badge_x + 6, cy + 13, 9, 0.8, 0.85, 0.95, 0.9, t.font_family)
+            local badge_w = ui.measure_text(item.badge, 9, t.font_family) + 10
+            local badge_x = cx + card_w - badge_w - 10
+            ui.fill_rounded_rect(badge_x, cy + 9, badge_w, 16, 4, 0.14, 0.16, 0.22, 0.90)
+            ui.draw_text(item.badge, badge_x + 5, cy + 11, 9, 0.8, 0.85, 0.95, 0.9, t.font_family)
 
-            local title_str = item.title
-            while #title_str > 4 and ui.measure_text(title_str, 11, t.font_family) > (card_w - 28) do
-                title_str = title_str:sub(1, -2)
-            end
-            if title_str ~= item.title then
-                title_str = title_str .. "..."
-            end
-
-            ui.draw_text(title_str, cx + 14, cy + card_h - 26, 11, 0.92, 0.92, 0.96, is_sel and 1.0 or 0.65,
+            local title_str = truncate_utf8(item.title, card_w - 24, t.font_family, 10)
+            ui.draw_text(title_str, cx + 12, cy + card_h - 22, 10, 0.92, 0.92, 0.96, is_sel and 1.0 or 0.65,
                 t.font_family)
         end
     end

@@ -603,7 +603,7 @@ int main() {
 
         lua.open_libraries(sol::lib::base, sol::lib::package, sol::lib::string,
                            sol::lib::math, sol::lib::table, sol::lib::os,
-                           sol::lib::io, sol::lib::debug);
+                           sol::lib::io, sol::lib::debug, sol::lib::utf8);
 
         lua["os"]["execute"] = sol::nil;
         lua["os"]["remove"] = sol::nil;
@@ -682,9 +682,25 @@ int main() {
         });
 
         wm.set_function("get_window_title", [](size_t hwnd) {
-            char title[256] = {0};
-            GetWindowTextA(reinterpret_cast<HWND>(hwnd), title, sizeof(title));
-            return std::string(title);
+            HWND handle = reinterpret_cast<HWND>(hwnd);
+            if (!IsWindow(handle))
+                return std::string("");
+
+            int len = GetWindowTextLengthW(handle);
+            if (len <= 0)
+                return std::string("");
+
+            std::wstring wtitle(len + 1, L'\0');
+            GetWindowTextW(handle, wtitle.data(), len + 1);
+            wtitle.resize(len);
+
+            int utf8_len = WideCharToMultiByte(CP_UTF8, 0, wtitle.data(), len, nullptr, 0, nullptr, nullptr);
+            if (utf8_len <= 0)
+                return std::string("");
+
+            std::string utf8_title(utf8_len, '\0');
+            WideCharToMultiByte(CP_UTF8, 0, wtitle.data(), len, utf8_title.data(), utf8_len, nullptr, nullptr);
+            return utf8_title;
         });
 
         wm.set_function("is_toplevel", [](size_t hwnd) {
