@@ -702,6 +702,17 @@ int main() {
                           SW_SHOWNORMAL);
         });
 
+        wm.set_function("create_thumbnail", [](size_t src_hwnd) {
+            return CreateDwmThumbnail(g_overlay_hwnd, reinterpret_cast<HWND>(src_hwnd));
+        });
+        wm.set_function("update_thumbnail", [](size_t thumb_id, int x, int y, int w, int h, int opacity) {
+            BYTE alpha = static_cast<BYTE>(opacity < 0 ? 0 : (opacity > 255 ? 255 : opacity));
+            UpdateDwmThumbnail(thumb_id, x, y, w, h, alpha);
+        });
+        wm.set_function("destroy_thumbnail", [](size_t thumb_id) {
+            DestroyDwmThumbnail(thumb_id);
+        });
+
         wm.set_function("focus_window", [](size_t hwnd) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
