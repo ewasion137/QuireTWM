@@ -6,8 +6,7 @@ Quire.alttab_items = {}
 Quire.focus_history = Quire.focus_history or {}
 
 local anim_cx = 0.0
-local active_thumb = nil
-local active_thumb_hwnd = nil
+local live_thumbnails = {}
 
 local function is_valid(hwnd)
     return hwnd and wm.is_window(hwnd) and wm.is_window_visible(hwnd)
@@ -28,12 +27,13 @@ function alttab.record_focus(hwnd)
     end
 end
 
-local function cleanup_thumbnail()
-    if active_thumb and wm.destroy_thumbnail then
-        wm.destroy_thumbnail(active_thumb)
-        active_thumb = nil
-        active_thumb_hwnd = nil
+local function cleanup_all_thumbnails()
+    if wm.destroy_thumbnail then
+        for hwnd, thumb_id in pairs(live_thumbnails) do
+            wm.destroy_thumbnail(thumb_id)
+        end
     end
+    live_thumbnails = {}
 end
 
 local function get_window_meta(hwnd)
@@ -98,7 +98,7 @@ function alttab.action(action_type)
     elseif action_type == "commit" then
         if Quire.alttab_active then
             local item = Quire.alttab_items[Quire.alttab_index]
-            cleanup_thumbnail()
+            cleanup_all_thumbnails()
             Quire.alttab_active = false
             Quire.alttab_items = {}
 
@@ -123,7 +123,7 @@ function alttab.action(action_type)
         end
 
     elseif action_type == "cancel" then
-        cleanup_thumbnail()
+        cleanup_all_thumbnails()
         Quire.alttab_active = false
         Quire.alttab_items = {}
     end
@@ -131,13 +131,13 @@ end
 
 function alttab.draw()
     if not Quire.alttab_active then
-        cleanup_thumbnail()
+        cleanup_all_thumbnails()
         return
     end
 
     local count = #Quire.alttab_items
     if count == 0 then
-        cleanup_thumbnail()
+        cleanup_all_thumbnails()
         return
     end
 
@@ -175,8 +175,7 @@ function alttab.draw()
     ui.draw_rounded_rect(anim_cx - 2, start_y - 2, card_w + 4, card_h + 4, t.rounding + 2,
         accent[1], accent[2], accent[3], 1.0, 2.0)
 
-    local active_target_hwnd = nil
-    local active_rect = nil
+    local visible_hwnds = {}
 
     for i = 1, max_visible do
         local item_idx = i + offset
@@ -197,9 +196,21 @@ function alttab.draw()
 
             ui.fill_rounded_rect(thumb_x, thumb_y, thumb_w, thumb_h, 6, 0.03, 0.03, 0.05, 0.90)
 
-            if is_sel then
-                active_target_hwnd = item.hwnd
-                active_rect = { thumb_x, thumb_y, thumb_w, thumb_h }
+            visible_hwnds[item.hwnd] = true
+
+            if wm.create_thumbnail and wm.update_thumbnail then
+                local thumb_id = live_thumbnails[item.hwnd]
+                if not thumb_id then
+                    thumb_id = wm.create_thumbnail(item.hwnd)
+                    if thumb_id and thumb_id ~= 0 then
+                        live_thumbnails[item.hwnd] = thumb_id
+                    end
+                end
+
+                if thumb_id and thumb_id ~= 0 then
+                    local alpha = is_sel and 255 or 215
+                    wm.update_thumbnail(thumb_id, thumb_x, thumb_y, thumb_w, thumb_h, alpha)
+                end
             end
 
             ui.draw_text(item.proc, cx + 14, cy + 12, 11, accent[1], accent[2], accent[3], 1.0, t.font_family)
@@ -222,17 +233,13 @@ function alttab.draw()
         end
     end
 
-    if active_target_hwnd and active_rect and wm.create_thumbnail then
-        if active_thumb_hwnd ~= active_target_hwnd then
-            cleanup_thumbnail()
-            active_thumb = wm.create_thumbnail(active_target_hwnd)
-            active_thumb_hwnd = active_target_hwnd
+    for hwnd, thumb_id in pairs(live_thumbnails) do
+        if not visible_hwnds[hwnd] then
+            if wm.destroy_thumbnail then
+                wm.destroy_thumbnail(thumb_id)
+            end
+            live_thumbnails[hwnd] = nil
         end
-        if active_thumb then
-            wm.update_thumbnail(active_thumb, active_rect[1], active_rect[2], active_rect[3], active_rect[4], 255)
-        end
-    else
-        cleanup_thumbnail()
     end
 end
 

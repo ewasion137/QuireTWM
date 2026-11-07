@@ -1112,6 +1112,9 @@ Quire.dispatch_event = function(event_type, hwnd, title)
     end
 
     if event_type == 0x0003 then
+        if alttab and alttab.record_focus then
+            alttab.record_focus(hwnd)
+        end
         local col_idx, _, _, existing_ws = Quire.find_window_pos(hwnd)
 
         if existing_ws and existing_ws ~= Quire.current_workspace then
@@ -1895,6 +1898,9 @@ end
 
 if #ws1.columns > 0 and #ws1.columns[1].windows > 0 then
     Quire.focused_window = ws1.columns[1].windows[1]
+    if alttab and alttab.record_focus then
+        alttab.record_focus(Quire.focused_window)
+    end
 end
 
 function Quire.cleanup_for_exit()
