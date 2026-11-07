@@ -35,12 +35,12 @@ Quire.config = {
     border_inactive = Quire.theme.border_color,
     idle_mode = "pulse",
     close_anim = "scale",
-    move_easing = "back",
+    move_easing = "spring",
     focus_follows_mouse = false,
     scratchpad_cmd = "alacritty.exe",
     spring = {
-        stiffness = 160,
-        damping = 22,
+        stiffness = 170,
+        damping = 24,
         mass = 1.0
     },
     smart_gaps = true,
@@ -77,6 +77,7 @@ Quire.scratchpad_visible = false
 Quire.scratchpad_y = -2000.0
 Quire.scratchpad_vy = 0.0
 Quire.expecting_scratchpad = false
+Quire.scratchpad_prev_focus = nil
 
 local function get_wall_time()
     return wm.get_time and wm.get_time() or os.clock()
@@ -115,31 +116,50 @@ local function get_ws(ws_id)
 end
 
 local function solve_spring(curr, vel, target, stiffness, damping, mass, dt)
-    if dt <= 0 then
+    if dt <= 0.0 then
         return curr, vel
     end
-    if math.abs(curr - target) < 0.2 and math.abs(vel) < 0.2 then
+
+    local diff = curr - target
+    if math.abs(diff) < 0.15 and math.abs(vel) < 0.15 then
         return target, 0.0
     end
+
     dt = math.min(dt, 0.033)
     mass = math.max(0.05, mass or 1.0)
-    damping = math.max(0.1, damping or 22.0)
-    stiffness = math.max(1.0, stiffness or 160.0)
+    damping = math.max(0.1, damping or 24.0)
+    stiffness = math.max(1.0, stiffness or 170.0)
 
-    local steps = 4
-    local sdt = dt / steps
-    for _ = 1, steps do
-        local force = -stiffness * (curr - target) - damping * vel
-        vel = vel + (force / mass) * sdt
-        curr = curr + vel * sdt
+    local omega0 = math.sqrt(stiffness / mass)
+    local zeta = damping / (2.0 * math.sqrt(stiffness * mass))
+
+    if zeta < 0.999 then
+        local omega_d = omega0 * math.sqrt(1.0 - zeta * zeta)
+        local decay = math.exp(-zeta * omega0 * dt)
+        local cos_val = math.cos(omega_d * dt)
+        local sin_val = math.sin(omega_d * dt)
+
+        local c1 = diff
+        local c2 = (vel + zeta * omega0 * diff) / omega_d
+
+        local next_pos = target + decay * (c1 * cos_val + c2 * sin_val)
+        local next_vel = decay * ((vel * cos_val) - (c1 * omega_d + zeta * omega0 * c2) * sin_val)
+        return next_pos, next_vel
+    else
+        local decay = math.exp(-omega0 * dt)
+        local c1 = diff
+        local c2 = vel + omega0 * diff
+        local next_pos = target + decay * (c1 + c2 * dt)
+        local next_vel = decay * (vel - (c1 + c2 * dt) * omega0 + c2)
+        return next_pos, next_vel
     end
-    return curr, vel
 end
 
-local ignored_classes = {"WorkerW", "Progman", "Shell_TrayWnd", "QuireOverlay", "Chrome_ChildWin_Templ", "GhostWindow",
-                         "DesktopWindowXamlSource", "MSCTFIME UI", "IME", "CicMarshalWnd"}
-
-Quire.scratchpad_prev_focus = nil
+local ignored_classes = {
+    "WorkerW", "Progman", "Shell_TrayWnd", "QuireOverlay",
+    "Chrome_ChildWin_Templ", "GhostWindow", "DesktopWindowXamlSource",
+    "MSCTFIME UI", "IME", "CicMarshalWnd"
+}
 
 function Quire.is_managed(hwnd)
     if Quire.floating_windows[hwnd] or Quire.scratchpad_hwnd == hwnd then
@@ -167,10 +187,12 @@ end
 
 function Quire.find_window_pos(hwnd)
     for ws_id, ws in pairs(Quire.workspaces) do
-        for col_idx, col in ipairs(ws.columns) do
-            for row_idx, w in ipairs(col.windows) do
-                if w == hwnd then
-                    return col_idx, row_idx, ws, ws_id
+        if ws.columns then
+            for col_idx, col in ipairs(ws.columns) do
+                for row_idx, w in ipairs(col.windows) do
+                    if w == hwnd then
+                        return col_idx, row_idx, ws, ws_id
+                    end
                 end
             end
         end
@@ -215,7 +237,6 @@ local function layout_columns(ws_id, wx, wy, ww, wh, cfg)
 
     local avail_w = ww - (gaps_out * 2)
     local avail_h = wh - (gaps_out * 2)
-
     local cur_x = wx + gaps_out
 
     for c_idx, col in ipairs(cols) do
@@ -273,7 +294,7 @@ function Quire.retile()
     for _, col in ipairs(ws.columns) do
         local valid_wins = {}
         for _, hwnd in ipairs(col.windows) do
-            if wm.is_window_visible(hwnd) and not Quire.floating_windows[hwnd] then
+            if wm.is_window(hwnd) and not Quire.floating_windows[hwnd] then
                 table.insert(valid_wins, hwnd)
             end
         end
@@ -490,110 +511,6 @@ Quire.on_mouse_move = function(mx, my)
     end
 end
 
-local session_path = wm.get_config_path():gsub("config%.lua$", "session.lua")
-Quire.saved_session = nil
-
-function Quire.save_session()
-    local out = {"return {\n"}
-    for ws_id, ws in pairs(Quire.workspaces) do
-        table.insert(out, string.format("  [%d] = {\n    columns = {\n", ws_id))
-        for _, col in ipairs(ws.columns) do
-            table.insert(out, string.format("      { width = %.2f, apps = { ", col.width))
-            for _, hwnd in ipairs(col.windows) do
-                local proc = wm.get_process_name and wm.get_process_name(hwnd) or ""
-                if proc ~= "" then
-                    table.insert(out, string.format("%q, ", proc:lower()))
-                end
-            end
-            table.insert(out, "} },\n")
-        end
-        table.insert(out, "    }\n  },\n")
-    end
-    table.insert(out, "}\n")
-
-    local f = io.open(session_path, "w")
-    if f then
-        f:write(table.concat(out))
-        f:close()
-        log("Window session saved to " .. session_path)
-        trigger_hud()
-    end
-end
-
-function Quire.load_session()
-    local fn = loadfile(session_path)
-    if fn then
-        local ok, data = pcall(fn)
-        if ok and type(data) == "table" then
-            Quire.saved_session = data
-        end
-    end
-end
-
-function Quire.restore_session()
-    Quire.load_session()
-    if not Quire.saved_session then
-        return
-    end
-
-    local existing = wm.enumerate_windows()
-    local matched_hwnds = {}
-
-    Quire.workspaces = {}
-    Quire.window_ws = {}
-    Quire.window_targets = {}
-    Quire.window_currents = {}
-
-    for ws_id, ws_data in pairs(Quire.saved_session) do
-        local ws = get_ws(ws_id)
-        for _, col_data in ipairs(ws_data.columns or {}) do
-            local new_col = {
-                width = col_data.width or Quire.config.default_column_width,
-                windows = {}
-            }
-            for _, target_proc in ipairs(col_data.apps or {}) do
-                for _, hwnd in ipairs(existing) do
-                    if not matched_hwnds[hwnd] and
-                        not should_ignore(hwnd, wm.get_window_title(hwnd), wm.get_class_name(hwnd)) then
-                        local proc = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
-                        if proc == target_proc then
-                            table.insert(new_col.windows, hwnd)
-                            matched_hwnds[hwnd] = true
-                            Quire.window_ws[hwnd] = ws_id
-                            break
-                        end
-                    end
-                end
-            end
-            if #new_col.windows > 0 then
-                table.insert(ws.columns, new_col)
-            end
-        end
-    end
-
-    local ws1 = get_ws(1)
-    for _, hwnd in ipairs(existing) do
-        if not matched_hwnds[hwnd] and not should_ignore(hwnd, wm.get_window_title(hwnd), wm.get_class_name(hwnd)) then
-            if not apply_rules(hwnd, wm.get_window_title(hwnd), wm.get_class_name(hwnd)) then
-                table.insert(ws1.columns, {
-                    width = Quire.config.default_column_width,
-                    windows = {hwnd}
-                })
-                Quire.window_ws[hwnd] = 1
-            end
-        end
-    end
-
-    local cur_ws = get_ws(Quire.current_workspace)
-    if #cur_ws.columns > 0 and #cur_ws.columns[1].windows > 0 then
-        Quire.focused_window = cur_ws.columns[1].windows[1]
-        wm.focus_window(Quire.focused_window)
-    end
-
-    trigger_hud()
-    Quire.retile()
-end
-
 local function add_window(hwnd, title, class)
     if Quire.expecting_scratchpad then
         Quire.expecting_scratchpad = false
@@ -672,7 +589,7 @@ local function remove_window(hwnd, is_destroy)
 
     if was_scratchpad then
         local prev = Quire.scratchpad_prev_focus
-        if prev and wm.is_window_visible(prev) and not Quire.closing_windows[prev] then
+        if prev and wm.is_window(prev) and not Quire.closing_windows[prev] then
             Quire.focused_window = prev
             wm.focus_window(prev)
         end
@@ -946,7 +863,7 @@ function Quire.focus_direction(dir)
             end
         end
     end
-    if not col_idx then
+    if not col_idx or not ws or not ws.columns then
         return
     end
 
@@ -1318,7 +1235,7 @@ Quire.on_render_overlay = function()
                 end
             end
             Quire.animating_ws = nil
-            if Quire.focused_window and wm.is_window_visible(Quire.focused_window) then
+            if Quire.focused_window and wm.is_window(Quire.focused_window) then
                 wm.focus_window(Quire.focused_window)
             end
         end
@@ -1344,9 +1261,8 @@ Quire.on_render_overlay = function()
 
     local target_zoom = Quire.overview_active and 0.72 or 1.0
     Quire.overview_zoom = Quire.overview_zoom + (target_zoom - Quire.overview_zoom) * math.min(1.0, dt * 14.0)
-    local is_zooming = math.abs(Quire.overview_zoom - 1.0) > 0.002
 
-    if Quire.scratchpad_hwnd and wm.is_window_visible(Quire.scratchpad_hwnd) then
+    if Quire.scratchpad_hwnd and wm.is_window(Quire.scratchpad_hwnd) then
         local sp_w = math.floor(ww * 0.70)
         local sp_h = math.floor(wh * 0.60)
         local sp_x = wx + math.floor((ww - sp_w) * 0.5)
@@ -1418,22 +1334,11 @@ Quire.on_render_overlay = function()
                         curr.render_w = final_w
                         curr.render_h = final_h
 
-                        local changed = curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or curr.ah ~=
-                                            final_h
+                        local changed = (curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or curr.ah ~= final_h)
                         if (changed or curr.needs_sync) and final_x > -final_w - 100 and final_x < sw + 100 then
                             wm.move_window(hwnd, final_x, final_y, final_w, final_h)
                             curr.ax, curr.ay, curr.aw, curr.ah = final_x, final_y, final_w, final_h
                             curr.needs_sync = false
-                        end
-
-                        local is_moving =
-                            (math.abs(curr.vx) > 0.2 or math.abs(curr.vy) > 0.2 or math.abs(curr.vw) > 0.2 or
-                                math.abs(curr.vh) > 0.2)
-                        if is_moving or curr.needs_sync or is_zooming then
-                            curr.needs_sync = is_moving or is_zooming
-                            if final_x > -final_w - 100 and final_x < sw + 100 then
-                                wm.move_window(hwnd, final_x, final_y, final_w, final_h)
-                            end
                         end
                     end
                 end
@@ -1507,12 +1412,12 @@ Quire.on_render_overlay = function()
                             end
 
                             if ui.draw_shadow_rounded_rect then
-                                ui.draw_shadow_rounded_rect(bx, by, bw, bh, win_ctx.rounding, 0.0, 0.0, 0.0, 0.40, 10.0, 2.0)
+                                ui.draw_shadow_rounded_rect(bx, by, bw, bh, win_ctx.rounding, 0.0, 0.0, 0.0, 0.35, 10.0, 2.0)
                             end
 
                             if ui.draw_glow_rounded_rect and is_active then
                                 ui.draw_glow_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding,
-                                    col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, 1.4, 5.0)
+                                    col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, 1.2, 5.0)
                             end
 
                             ui.draw_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding, col_color[1],
@@ -1558,6 +1463,20 @@ end
 
 Quire.on_alttab_action = function(action_type)
     alttab.action(action_type)
+end
+
+Quire.on_keyboard_input = function(vk, char)
+    if Quire.launcher_active and launcher.on_key then
+        return launcher.on_key(vk, char)
+    end
+    return false
+end
+
+function Quire.toggle_launcher()
+    launcher.toggle()
+    if wm.set_input_capture then
+        wm.set_input_capture(Quire.launcher_active)
+    end
 end
 
 local function recheck_tiled_windows()
@@ -1634,6 +1553,7 @@ Quire.reload_config = function()
 end
 
 local vert_scroll_accum = 0.0
+local last_scroll_time = 0.0
 
 Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
     local now = get_wall_time()
@@ -1883,7 +1803,7 @@ if not fn then
     Quire.bind("Alt+F", Quire.toggle_fullscreen)
     Quire.bind("Alt+V", Quire.toggle_floating)
     Quire.bind("Alt+D", Quire.cycle_column_preset)
-    Quire.bind("Alt+Space", launcher.toggle)
+    Quire.bind("Alt+Space", Quire.toggle_launcher)
     Quire.bind("Alt+Return", launcher.commit)
     for i = 1, 9 do
         Quire.bind("Alt+" .. i, function()
