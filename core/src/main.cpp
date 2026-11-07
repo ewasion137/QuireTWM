@@ -67,6 +67,7 @@ struct IPCMessage {
     std::string response;
 };
 
+void CallLuaExitCleanup();
 void RestoreAllWindows();
 
 int DetectMonitorRefreshRate() {
@@ -147,6 +148,7 @@ void ShowTrayMenu(HWND hwnd) {
     DestroyMenu(hMenu);
 
     if (cmd == ID_TRAY_EXIT) {
+        CallLuaExitCleanup();
         RestoreAllWindows();
         g_running = false;
         PostQuitMessage(0);
@@ -958,9 +960,16 @@ int main() {
         });
 
         wm.set_function("cloak_window", [](size_t hwnd, bool cloak) {
-            int val = cloak ? 1 : 0;
-            DwmSetWindowAttribute(reinterpret_cast<HWND>(hwnd), DWMWA_CLOAKED,
-                                  &val, sizeof(val));
+            HWND handle = reinterpret_cast<HWND>(hwnd);
+            if (!IsWindow(handle))
+                return;
+            BOOL val = cloak ? TRUE : FALSE;
+            DwmSetWindowAttribute(handle, 13, &val, sizeof(val));
+            int cval = cloak ? 1 : 0;
+            DwmSetWindowAttribute(handle, DWMWA_CLOAKED, &cval, sizeof(cval));
+            if (!cloak) {
+                ShowWindow(handle, SW_SHOWNA);
+            }
         });
 
         wm.set_function("enumerate_windows", []() {

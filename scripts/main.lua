@@ -1390,7 +1390,10 @@ Quire.on_render_overlay = function()
                             final_y = math.floor(mid_y + (rel_cy * Quire.overview_zoom) - (final_h * 0.5))
                         end
 
-                        curr.x, curr.y, curr.last_w, curr.last_h = final_x, final_y, final_w, final_h
+                        curr.x = final_x
+                        curr.y = final_y
+                        curr.render_w = final_w
+                        curr.render_h = final_h
 
                         local changed = curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or curr.ah ~=
                                             final_h
@@ -1445,7 +1448,10 @@ Quire.on_render_overlay = function()
                     local curr = Quire.window_currents[hwnd]
                     if curr and curr.x > -curr.w and curr.x < sw then
                         local is_active = (hwnd == Quire.focused_window) and (fg == hwnd)
-                        local bx, by, bw, bh = curr.x, curr.y, curr.w, curr.h
+                        local bx = curr.x
+                        local by = curr.y
+                        local bw = curr.render_w or curr.w
+                        local bh = curr.render_h or curr.h
 
                         local win_ctx = {
                             hwnd = hwnd,
@@ -1476,6 +1482,16 @@ Quire.on_render_overlay = function()
                             if is_active and anims.idle[cfg.idle_mode] then
                                 col_color, offset_x, offset_y = anims.idle[cfg.idle_mode](now, col_color)
                             end
+
+                            if ui.draw_shadow_rounded_rect then
+                                ui.draw_shadow_rounded_rect(bx, by, bw, bh, win_ctx.rounding, 0.0, 0.0, 0.0, 0.40, 10.0, 2.0)
+                            end
+
+                            if ui.draw_glow_rounded_rect and is_active then
+                                ui.draw_glow_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding,
+                                    col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, 1.4, 5.0)
+                            end
+
                             ui.draw_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding, col_color[1],
                                 col_color[2], col_color[3], col_color[4] or 1.0, win_ctx.thickness)
                         end
