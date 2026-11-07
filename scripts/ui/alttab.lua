@@ -225,11 +225,11 @@ function alttab.draw()
     end
 
     if ui.draw_glow_rounded_rect then
-        ui.draw_glow_rounded_rect(anim_cx - 4, start_y - 4, card_w + 8, card_h + 8, t.rounding + 2,
-            accent[1], accent[2], accent[3], 0.8, 8.0, 3.0)
+        ui.draw_glow_rounded_rect(anim_cx - 4, start_y - 4, card_w + 8, card_h + 8, t.rounding + 2, accent[1],
+            accent[2], accent[3], 0.8, 8.0, 3.0)
     end
-    ui.draw_rounded_rect(anim_cx - 2, start_y - 2, card_w + 4, card_h + 4, t.rounding + 2,
-        accent[1], accent[2], accent[3], 1.0, 2.0)
+    ui.draw_rounded_rect(anim_cx - 2, start_y - 2, card_w + 4, card_h + 4, t.rounding + 2, accent[1], accent[2],
+        accent[3], 1.0, 2.0)
 
     local visible_hwnds = {}
 

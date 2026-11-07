@@ -155,11 +155,8 @@ local function solve_spring(curr, vel, target, stiffness, damping, mass, dt)
     end
 end
 
-local ignored_classes = {
-    "WorkerW", "Progman", "Shell_TrayWnd", "QuireOverlay",
-    "Chrome_ChildWin_Templ", "GhostWindow", "DesktopWindowXamlSource",
-    "MSCTFIME UI", "IME", "CicMarshalWnd"
-}
+local ignored_classes = {"WorkerW", "Progman", "Shell_TrayWnd", "QuireOverlay", "Chrome_ChildWin_Templ", "GhostWindow",
+                         "DesktopWindowXamlSource", "MSCTFIME UI", "IME", "CicMarshalWnd"}
 
 function Quire.is_managed(hwnd)
     if Quire.floating_windows[hwnd] or Quire.scratchpad_hwnd == hwnd then
@@ -517,7 +514,9 @@ local function add_window(hwnd, title, class)
         Quire.floating_windows[hwnd] = true
         Quire.scratchpad_hwnd = hwnd
         Quire.scratchpad_visible = true
-        if wm.track_window then wm.track_window(hwnd) end
+        if wm.track_window then
+            wm.track_window(hwnd)
+        end
         trigger_hud()
         return
     end
@@ -526,7 +525,9 @@ local function add_window(hwnd, title, class)
         return
     end
     if apply_rules(hwnd, title, class) then
-        if wm.track_window then wm.track_window(hwnd) end
+        if wm.track_window then
+            wm.track_window(hwnd)
+        end
         return
     end
 
@@ -549,7 +550,9 @@ local function add_window(hwnd, title, class)
         table.insert(ws.columns, new_col)
     end
 
-    if wm.track_window then wm.track_window(hwnd) end
+    if wm.track_window then
+        wm.track_window(hwnd)
+    end
 
     Quire.window_ws[hwnd] = Quire.current_workspace
     Quire.focused_window = hwnd
@@ -1334,7 +1337,8 @@ Quire.on_render_overlay = function()
                         curr.render_w = final_w
                         curr.render_h = final_h
 
-                        local changed = (curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or curr.ah ~= final_h)
+                        local changed = (curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or curr.ah ~=
+                                            final_h)
                         if (changed or curr.needs_sync) and final_x > -final_w - 100 and final_x < sw + 100 then
                             wm.move_window(hwnd, final_x, final_y, final_w, final_h)
                             curr.ax, curr.ay, curr.aw, curr.ah = final_x, final_y, final_w, final_h
@@ -1367,7 +1371,8 @@ Quire.on_render_overlay = function()
     end
 
     if not fg_covers_screen then
-        local is_smart = cfg.smart_gaps and (#ws.columns == 1 and #ws.columns[1].windows == 1) and not Quire.overview_active
+        local is_smart = cfg.smart_gaps and (#ws.columns == 1 and #ws.columns[1].windows == 1) and
+                             not Quire.overview_active
         local win_rounding = is_smart and 0 or math.floor(cfg.rounding * Quire.overview_zoom)
 
         for _, col in ipairs(ws.columns) do
@@ -1412,7 +1417,8 @@ Quire.on_render_overlay = function()
                             end
 
                             if ui.draw_shadow_rounded_rect then
-                                ui.draw_shadow_rounded_rect(bx, by, bw, bh, win_ctx.rounding, 0.0, 0.0, 0.0, 0.35, 10.0, 2.0)
+                                ui.draw_shadow_rounded_rect(bx, by, bw, bh, win_ctx.rounding, 0.0, 0.0, 0.0, 0.35, 10.0,
+                                    2.0)
                             end
 
                             if ui.draw_glow_rounded_rect and is_active then
@@ -1832,9 +1838,13 @@ for _, hwnd in ipairs(existing) do
                 windows = {hwnd}
             })
             Quire.window_ws[hwnd] = 1
-            if wm.track_window then wm.track_window(hwnd) end
+            if wm.track_window then
+                wm.track_window(hwnd)
+            end
         else
-            if wm.track_window then wm.track_window(hwnd) end
+            if wm.track_window then
+                wm.track_window(hwnd)
+            end
         end
     end
 end

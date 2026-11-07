@@ -67,7 +67,8 @@ class Renderer {
 
     struct GradientKeyHash {
         size_t operator()(const GradientKey &k) const {
-            return static_cast<size_t>(k.c1) ^ (static_cast<size_t>(k.c2) * 2654435761u);
+            return static_cast<size_t>(k.c1) ^
+                   (static_cast<size_t>(k.c2) * 2654435761u);
         }
     };
 
@@ -102,15 +103,19 @@ class Renderer {
     IDWriteFactory *writeFactory;
 
     std::unordered_map<std::wstring, IDWriteTextFormat *> font_cache;
-    std::unordered_map<GradientKey, ID2D1LinearGradientBrush *, GradientKeyHash> gradient_cache;
-    std::unordered_map<TextLayoutKey, CachedLayout, TextLayoutKeyHash> layout_cache;
+    std::unordered_map<GradientKey, ID2D1LinearGradientBrush *, GradientKeyHash>
+        gradient_cache;
+    std::unordered_map<TextLayoutKey, CachedLayout, TextLayoutKeyHash>
+        layout_cache;
 
     uint32_t frame_index;
     float current_dpi;
 
     void release_target_resources();
     void set_brush_color(float r, float g, float b, float a);
-    IDWriteTextFormat *get_cached_text_format(const std::wstring &font, float size);
-    CachedLayout *get_or_create_layout(const std::string &text, float size, const std::string &fontName);
+    IDWriteTextFormat *get_cached_text_format(const std::wstring &font,
+                                              float size);
+    CachedLayout *get_or_create_layout(const std::string &text, float size,
+                                       const std::string &fontName);
     void prune_layout_cache();
 };

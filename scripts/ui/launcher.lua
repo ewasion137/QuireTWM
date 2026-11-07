@@ -8,17 +8,43 @@ local filtered_apps = {}
 local anim_y = 0.0
 local anim_alpha = 0.0
 
-local default_catalog = {
-    { name = "Terminal", path = "wt.exe", badge = "APP" },
-    { name = "Command Prompt", path = "cmd.exe", badge = "CMD" },
-    { name = "File Explorer", path = "explorer.exe", badge = "APP" },
-    { name = "Task Manager", path = "taskmgr.exe", badge = "SYS" },
-    { name = "Notepad", path = "notepad.exe", badge = "APP" },
-    { name = "Calculator", path = "calc.exe", badge = "APP" },
-    { name = "Settings", path = "ms-settings:", badge = "SYS" },
-    { name = "Control Panel", path = "control.exe", badge = "SYS" },
-    { name = "Registry Editor", path = "regedit.exe", badge = "SYS" }
-}
+local default_catalog = {{
+    name = "Terminal",
+    path = "wt.exe",
+    badge = "APP"
+}, {
+    name = "Command Prompt",
+    path = "cmd.exe",
+    badge = "CMD"
+}, {
+    name = "File Explorer",
+    path = "explorer.exe",
+    badge = "APP"
+}, {
+    name = "Task Manager",
+    path = "taskmgr.exe",
+    badge = "SYS"
+}, {
+    name = "Notepad",
+    path = "notepad.exe",
+    badge = "APP"
+}, {
+    name = "Calculator",
+    path = "calc.exe",
+    badge = "APP"
+}, {
+    name = "Settings",
+    path = "ms-settings:",
+    badge = "SYS"
+}, {
+    name = "Control Panel",
+    path = "control.exe",
+    badge = "SYS"
+}, {
+    name = "Registry Editor",
+    path = "regedit.exe",
+    badge = "SYS"
+}}
 
 local function get_catalog()
     if Quire.apps and #Quire.apps > 0 then
@@ -74,10 +100,11 @@ function launcher.toggle()
         anim_y = 0.0
         anim_alpha = 0.0
         launcher.filter()
-    else
         if wm.set_input_capture then
-            wm.set_input_capture(false)
+            wm.set_input_capture(true)
         end
+    else
+        launcher.close()
     end
 end
 
@@ -139,6 +166,11 @@ function launcher.on_key(vk, char)
         return true
     end
 
+    if vk == 0x09 then
+        launcher.navigate("down")
+        return true
+    end
+
     if vk == 0x08 then
         if #query > 0 then
             local len = utf8.len(query)
@@ -166,7 +198,7 @@ function launcher.on_key(vk, char)
         end
     end
 
-    return true
+    return false
 end
 
 function launcher.draw(alpha_mult)
@@ -199,18 +231,21 @@ function launcher.draw(alpha_mult)
     local py = math.floor((sh - panel_h) / 2)
 
     if ui.draw_shadow_rounded_rect then
-        ui.draw_shadow_rounded_rect(px, py, panel_w, panel_h, t.rounding + 2, 0.0, 0.0, 0.0, 0.55 * anim_alpha, 16.0, 3.0)
+        ui.draw_shadow_rounded_rect(px, py, panel_w, panel_h, t.rounding + 2, 0.0, 0.0, 0.0, 0.55 * anim_alpha, 16.0,
+            3.0)
     end
 
     ui.fill_rounded_rect(px, py, panel_w, panel_h, t.rounding, 0.06, 0.07, 0.09, 0.96 * anim_alpha)
-    ui.draw_rounded_rect(px, py, panel_w, panel_h, t.rounding, t.border_color[1], t.border_color[2], t.border_color[3], 0.35 * anim_alpha, 1.0)
+    ui.draw_rounded_rect(px, py, panel_w, panel_h, t.rounding, t.border_color[1], t.border_color[2], t.border_color[3],
+        0.35 * anim_alpha, 1.0)
 
     local search_y = py + 14
     ui.draw_text(">", px + 18, search_y + 4, 13, accent[1], accent[2], accent[3], anim_alpha, t.font_family)
 
     local input_str = query
     if input_str == "" then
-        ui.draw_text("Search apps or run command...", px + 36, search_y + 4, 12, 0.45, 0.48, 0.55, 0.70 * anim_alpha, t.font_family)
+        ui.draw_text("Search apps or run command...", px + 36, search_y + 4, 12, 0.45, 0.48, 0.55, 0.70 * anim_alpha,
+            t.font_family)
     else
         ui.draw_text(input_str, px + 36, search_y + 4, 12, 0.95, 0.95, 0.98, anim_alpha, t.font_family)
     end
@@ -223,7 +258,8 @@ function launcher.draw(alpha_mult)
     end
 
     local sep_y = py + 52
-    ui.draw_line(px + 12, sep_y, px + panel_w - 12, sep_y, t.border_color[1], t.border_color[2], t.border_color[3], 0.25 * anim_alpha, 1.0)
+    ui.draw_line(px + 12, sep_y, px + panel_w - 12, sep_y, t.border_color[1], t.border_color[2], t.border_color[3],
+        0.25 * anim_alpha, 1.0)
 
     local offset = 0
     if count > max_visible then
@@ -246,8 +282,10 @@ function launcher.draw(alpha_mult)
             anim_y = anim_y + (target_pill_y - anim_y) * 0.35
         end
 
-        ui.fill_rounded_rect(px + 10, anim_y, panel_w - 20, item_h, 6, accent[1], accent[2], accent[3], 0.16 * anim_alpha)
-        ui.draw_rounded_rect(px + 10, anim_y, panel_w - 20, item_h, 6, accent[1], accent[2], accent[3], 0.40 * anim_alpha, 1.0)
+        ui.fill_rounded_rect(px + 10, anim_y, panel_w - 20, item_h, 6, accent[1], accent[2], accent[3],
+            0.16 * anim_alpha)
+        ui.draw_rounded_rect(px + 10, anim_y, panel_w - 20, item_h, 6, accent[1], accent[2], accent[3],
+            0.40 * anim_alpha, 1.0)
     end
 
     if display_count == 0 then
@@ -261,7 +299,8 @@ function launcher.draw(alpha_mult)
                 local is_sel = (idx == Quire.launcher_index)
 
                 local name_color = is_sel and {0.98, 0.98, 1.0, 1.0} or {0.75, 0.78, 0.84, 0.85}
-                ui.draw_text(app.name, px + 22, iy + 12, 11, name_color[1], name_color[2], name_color[3], name_color[4] * anim_alpha, t.font_family)
+                ui.draw_text(app.name, px + 22, iy + 12, 11, name_color[1], name_color[2], name_color[3],
+                    name_color[4] * anim_alpha, t.font_family)
 
                 local badge_text = app.badge or "APP"
                 local bw = ui.measure_text(badge_text, 9, t.font_family) + 12
@@ -273,8 +312,10 @@ function launcher.draw(alpha_mult)
     end
 
     local foot_y = py + panel_h - 26
-    ui.draw_line(px + 12, foot_y - 6, px + panel_w - 12, foot_y - 6, t.border_color[1], t.border_color[2], t.border_color[3], 0.20 * anim_alpha, 1.0)
-    ui.draw_text("Enter to run   Esc to dismiss   Up/Down to navigate", px + 18, foot_y, 9, 0.45, 0.48, 0.55, 0.70 * anim_alpha, t.font_family)
+    ui.draw_line(px + 12, foot_y - 6, px + panel_w - 12, foot_y - 6, t.border_color[1], t.border_color[2],
+        t.border_color[3], 0.20 * anim_alpha, 1.0)
+    ui.draw_text("Enter to run   Esc to dismiss   Up/Down to navigate", px + 18, foot_y, 9, 0.45, 0.48, 0.55,
+        0.70 * anim_alpha, t.font_family)
 end
 
 return launcher

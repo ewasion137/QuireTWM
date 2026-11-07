@@ -1,6 +1,7 @@
 #include "../include/renderer.hpp"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+
 
 static void utf8_to_wide(const std::string &src, std::wstring &dst) {
     if (src.empty()) {
@@ -8,40 +9,45 @@ static void utf8_to_wide(const std::string &src, std::wstring &dst) {
         return;
     }
     wchar_t stack_buf[256];
-    int len = MultiByteToWideChar(CP_UTF8, 0, src.data(), static_cast<int>(src.size()), nullptr, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, src.data(),
+                                  static_cast<int>(src.size()), nullptr, 0);
     if (len <= 0) {
         dst.clear();
         return;
     }
     if (len < 256) {
-        MultiByteToWideChar(CP_UTF8, 0, src.data(), static_cast<int>(src.size()), stack_buf, len);
+        MultiByteToWideChar(CP_UTF8, 0, src.data(),
+                            static_cast<int>(src.size()), stack_buf, len);
         dst.assign(stack_buf, len);
     } else {
         dst.resize(len);
-        MultiByteToWideChar(CP_UTF8, 0, src.data(), static_cast<int>(src.size()), dst.data(), len);
+        MultiByteToWideChar(CP_UTF8, 0, src.data(),
+                            static_cast<int>(src.size()), dst.data(), len);
     }
 }
 
 static inline uint32_t pack_rgba(float r, float g, float b, float a) {
     auto clamp_val = [](float v) -> uint32_t {
-        if (v <= 0.0f) return 0;
-        if (v >= 1.0f) return 255;
+        if (v <= 0.0f)
+            return 0;
+        if (v >= 1.0f)
+            return 255;
         return static_cast<uint32_t>(v * 255.0f + 0.5f);
     };
-    return (clamp_val(a) << 24) | (clamp_val(r) << 16) | (clamp_val(g) << 8) | clamp_val(b);
+    return (clamp_val(a) << 24) | (clamp_val(r) << 16) | (clamp_val(g) << 8) |
+           clamp_val(b);
 }
 
 Renderer::Renderer()
     : hwnd_target(nullptr), factory(nullptr), target(nullptr), brush(nullptr),
       writeFactory(nullptr), frame_index(0), current_dpi(96.0f) {}
 
-Renderer::~Renderer() { 
-    shutdown(); 
-}
+Renderer::~Renderer() { shutdown(); }
 
 void Renderer::release_target_resources() {
     for (auto &[_, b] : gradient_cache) {
-        if (b) b->Release();
+        if (b)
+            b->Release();
     }
     gradient_cache.clear();
 
@@ -57,12 +63,14 @@ void Renderer::release_target_resources() {
 
 void Renderer::shutdown() {
     for (auto &[_, item] : layout_cache) {
-        if (item.layout) item.layout->Release();
+        if (item.layout)
+            item.layout->Release();
     }
     layout_cache.clear();
 
     for (auto &[_, fmt] : font_cache) {
-        if (fmt) fmt->Release();
+        if (fmt)
+            fmt->Release();
     }
     font_cache.clear();
 
@@ -85,11 +93,13 @@ bool Renderer::init(HWND hwnd) {
 
     hwnd_target = hwnd;
 
-    if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &factory))) {
+    if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                                             &factory))) {
         return false;
     }
 
-    if (!writeFactory && FAILED(DWriteCreateFactory(
+    if (!writeFactory &&
+        FAILED(DWriteCreateFactory(
             DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown **>(&writeFactory)))) {
         return false;
@@ -100,8 +110,10 @@ bool Renderer::init(HWND hwnd) {
 
     RECT rc;
     GetClientRect(hwnd, &rc);
-    UINT32 width = (rc.right - rc.left > 0) ? static_cast<UINT32>(rc.right - rc.left) : 1;
-    UINT32 height = (rc.bottom - rc.top > 0) ? static_cast<UINT32>(rc.bottom - rc.top) : 1;
+    UINT32 width =
+        (rc.right - rc.left > 0) ? static_cast<UINT32>(rc.right - rc.left) : 1;
+    UINT32 height =
+        (rc.bottom - rc.top > 0) ? static_cast<UINT32>(rc.bottom - rc.top) : 1;
     D2D1_SIZE_U size = D2D1::SizeU(width, height);
 
     release_target_resources();
@@ -109,9 +121,11 @@ bool Renderer::init(HWND hwnd) {
     HRESULT hr = factory->CreateHwndRenderTarget(
         D2D1::RenderTargetProperties(
             D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                              D2D1_ALPHA_MODE_PREMULTIPLIED),
             current_dpi, current_dpi),
-        D2D1::HwndRenderTargetProperties(hwnd, size, D2D1_PRESENT_OPTIONS_IMMEDIATELY),
+        D2D1::HwndRenderTargetProperties(hwnd, size,
+                                         D2D1_PRESENT_OPTIONS_IMMEDIATELY),
         &target);
 
     if (SUCCEEDED(hr) && target) {
@@ -159,11 +173,13 @@ void Renderer::set_brush_color(float r, float g, float b, float a) {
     }
 }
 
-IDWriteTextFormat *Renderer::get_cached_text_format(const std::wstring &font, float size) {
+IDWriteTextFormat *Renderer::get_cached_text_format(const std::wstring &font,
+                                                    float size) {
     if (!writeFactory)
         return nullptr;
     float safe_size = (size > 0.0f) ? size : 12.0f;
-    const std::wstring &safe_font = font.empty() ? L"Segoe UI Variable Display" : font;
+    const std::wstring &safe_font =
+        font.empty() ? L"Segoe UI Variable Display" : font;
     std::wstring key = safe_font + L"#" + std::to_wstring(safe_size);
 
     auto it = font_cache.find(key);
@@ -183,13 +199,15 @@ IDWriteTextFormat *Renderer::get_cached_text_format(const std::wstring &font, fl
     return nullptr;
 }
 
-Renderer::CachedLayout *Renderer::get_or_create_layout(const std::string &text, float size, const std::string &fontName) {
+Renderer::CachedLayout *
+Renderer::get_or_create_layout(const std::string &text, float size,
+                               const std::string &fontName) {
     if (!writeFactory || text.empty())
         return nullptr;
 
     std::wstring wfont;
     utf8_to_wide(fontName, wfont);
-    TextLayoutKey key = { text, wfont, size };
+    TextLayoutKey key = {text, wfont, size};
 
     auto it = layout_cache.find(key);
     if (it != layout_cache.end()) {
@@ -215,7 +233,8 @@ Renderer::CachedLayout *Renderer::get_or_create_layout(const std::string &text, 
         if (SUCCEEDED(layout->GetMetrics(&metrics))) {
             width = metrics.width;
         }
-        auto res = layout_cache.emplace(std::move(key), CachedLayout{ layout, width, frame_index });
+        auto res = layout_cache.emplace(
+            std::move(key), CachedLayout{layout, width, frame_index});
         return &res.first->second;
     }
     return nullptr;
@@ -224,7 +243,8 @@ Renderer::CachedLayout *Renderer::get_or_create_layout(const std::string &text, 
 void Renderer::prune_layout_cache() {
     for (auto it = layout_cache.begin(); it != layout_cache.end();) {
         if (frame_index - it->second.last_frame > 300) {
-            if (it->second.layout) it->second.layout->Release();
+            if (it->second.layout)
+                it->second.layout->Release();
             it = layout_cache.erase(it);
         } else {
             ++it;
@@ -242,7 +262,8 @@ void Renderer::draw_rect(float x, float y, float w, float h, float r, float g,
     float ry = y + inset;
     float rw = (w > thickness) ? (w - thickness) : 0.0f;
     float rh = (h > thickness) ? (h - thickness) : 0.0f;
-    target->DrawRectangle(D2D1::RectF(rx, ry, rx + rw, ry + rh), brush, thickness);
+    target->DrawRectangle(D2D1::RectF(rx, ry, rx + rw, ry + rh), brush,
+                          thickness);
 }
 
 void Renderer::fill_rect(float x, float y, float w, float h, float r, float g,
@@ -265,7 +286,8 @@ void Renderer::draw_rounded_rect(float x, float y, float w, float h,
     float rw = (w > thickness) ? (w - thickness) : 0.0f;
     float rh = (h > thickness) ? (h - thickness) : 0.0f;
     float rad = (radius > inset) ? (radius - inset) : 0.0f;
-    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + rw, ry + rh), rad, rad);
+    D2D1_ROUNDED_RECT rr =
+        D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + rw, ry + rh), rad, rad);
     target->DrawRoundedRectangle(rr, brush, thickness);
 }
 
@@ -288,7 +310,7 @@ void Renderer::draw_gradient_rounded_rect(float x, float y, float w, float h,
     D2D1_POINT_2F start = D2D1::Point2F(cx - dx, cy - dy);
     D2D1_POINT_2F end = D2D1::Point2F(cx + dx, cy + dy);
 
-    GradientKey key = { pack_rgba(r1, g1, b1, a1), pack_rgba(r2, g2, b2, a2) };
+    GradientKey key = {pack_rgba(r1, g1, b1, a1), pack_rgba(r2, g2, b2, a2)};
     auto it = gradient_cache.find(key);
     ID2D1LinearGradientBrush *grad_brush = nullptr;
 
@@ -302,9 +324,11 @@ void Renderer::draw_gradient_rounded_rect(float x, float y, float w, float h,
         stops[1].position = 1.0f;
 
         ID2D1GradientStopCollection *coll = nullptr;
-        if (SUCCEEDED(target->CreateGradientStopCollection(stops, 2, &coll)) && coll) {
+        if (SUCCEEDED(target->CreateGradientStopCollection(stops, 2, &coll)) &&
+            coll) {
             target->CreateLinearGradientBrush(
-                D2D1::LinearGradientBrushProperties(start, end), coll, &grad_brush);
+                D2D1::LinearGradientBrushProperties(start, end), coll,
+                &grad_brush);
             coll->Release();
             if (grad_brush) {
                 gradient_cache.emplace(key, grad_brush);
@@ -323,7 +347,8 @@ void Renderer::draw_gradient_rounded_rect(float x, float y, float w, float h,
         float rh = (h > thickness) ? (h - thickness) : 0.0f;
         float rad = (radius > inset) ? (radius - inset) : 0.0f;
 
-        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + rw, ry + rh), rad, rad);
+        D2D1_ROUNDED_RECT rr =
+            D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + rw, ry + rh), rad, rad);
         target->DrawRoundedRectangle(rr, grad_brush, thickness);
     }
 }
@@ -334,14 +359,14 @@ void Renderer::fill_rounded_rect(float x, float y, float w, float h,
     if (!target || w <= 0.0f || h <= 0.0f)
         return;
     set_brush_color(r, g, b, a);
-    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius);
+    D2D1_ROUNDED_RECT rr =
+        D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius);
     target->FillRoundedRectangle(rr, brush);
 }
 
 void Renderer::draw_shadow_rounded_rect(float x, float y, float w, float h,
-                                        float radius, float r, float g,
-                                        float b, float a, float blur,
-                                        float spread) {
+                                        float radius, float r, float g, float b,
+                                        float a, float blur, float spread) {
     if (!target || a <= 0.001f || blur <= 0.0f)
         return;
 
@@ -351,19 +376,20 @@ void Renderer::draw_shadow_rounded_rect(float x, float y, float w, float h,
 
     for (int i = steps; i >= 1; --i) {
         float exp_dist = step_spread * static_cast<float>(i);
-        float step_alpha = base_alpha * (1.0f - static_cast<float>(i - 1) / static_cast<float>(steps));
+        float step_alpha = base_alpha * (1.0f - static_cast<float>(i - 1) /
+                                                    static_cast<float>(steps));
         set_brush_color(r, g, b, step_alpha);
-        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
-            D2D1::RectF(x - exp_dist, y - exp_dist, x + w + exp_dist, y + h + exp_dist),
-            radius + exp_dist, radius + exp_dist);
+        D2D1_ROUNDED_RECT rr =
+            D2D1::RoundedRect(D2D1::RectF(x - exp_dist, y - exp_dist,
+                                          x + w + exp_dist, y + h + exp_dist),
+                              radius + exp_dist, radius + exp_dist);
         target->DrawRoundedRectangle(rr, brush, step_spread);
     }
 }
 
 void Renderer::draw_glow_rounded_rect(float x, float y, float w, float h,
-                                      float radius, float r, float g,
-                                      float b, float a, float intensity,
-                                      float spread) {
+                                      float radius, float r, float g, float b,
+                                      float a, float intensity, float spread) {
     if (!target || a <= 0.001f || intensity <= 0.0f)
         return;
 
@@ -373,11 +399,13 @@ void Renderer::draw_glow_rounded_rect(float x, float y, float w, float h,
 
     for (int i = steps; i >= 1; --i) {
         float exp_dist = step_spread * static_cast<float>(i);
-        float step_alpha = base_alpha * (1.0f - static_cast<float>(i - 1) / static_cast<float>(steps));
+        float step_alpha = base_alpha * (1.0f - static_cast<float>(i - 1) /
+                                                    static_cast<float>(steps));
         set_brush_color(r, g, b, step_alpha);
-        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
-            D2D1::RectF(x - exp_dist, y - exp_dist, x + w + exp_dist, y + h + exp_dist),
-            radius + exp_dist, radius + exp_dist);
+        D2D1_ROUNDED_RECT rr =
+            D2D1::RoundedRect(D2D1::RectF(x - exp_dist, y - exp_dist,
+                                          x + w + exp_dist, y + h + exp_dist),
+                              radius + exp_dist, radius + exp_dist);
         target->DrawRoundedRectangle(rr, brush, step_spread);
     }
 }
@@ -409,7 +437,8 @@ void Renderer::draw_line(float x1, float y1, float x2, float y2, float r,
     if (!target || thickness <= 0.0f)
         return;
     set_brush_color(r, g, b, a);
-    target->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), brush, thickness);
+    target->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), brush,
+                     thickness);
 }
 
 void Renderer::draw_circle(float x, float y, float radius, float r, float g,
@@ -433,7 +462,8 @@ void Renderer::fill_circle(float x, float y, float radius, float r, float g,
 void Renderer::push_clip(float x, float y, float w, float h) {
     if (!target)
         return;
-    target->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    target->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h),
+                                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 }
 
 void Renderer::pop_clip() {
