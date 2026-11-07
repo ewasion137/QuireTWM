@@ -1881,4 +1881,44 @@ if #ws1.columns > 0 and #ws1.columns[1].windows > 0 then
     Quire.focused_window = ws1.columns[1].windows[1]
 end
 
+function Quire.cleanup_for_exit()
+    local wx, wy, ww, wh = wm.get_work_area()
+    local off = 0
+
+    for ws_id, ws in pairs(Quire.workspaces) do
+        for _, col in ipairs(ws.columns) do
+            for _, hwnd in ipairs(col.windows) do
+                if wm.is_window(hwnd) then
+                    wm.cloak_window(hwnd, false)
+                    if wm.set_topmost then
+                        wm.set_topmost(hwnd, false)
+                    end
+                    local rx, ry, rw, rh = wm.get_window_rect(hwnd)
+                    if not rx or rx < -100 or ry < -100 or rx > ww + 100 or ry > wh + 100 or rw < 150 or rh < 100 then
+                        wm.move_window(hwnd, wx + 60 + off, wy + 60 + off, math.floor(ww * 0.7), math.floor(wh * 0.7))
+                        off = (off + 35) % 350
+                    end
+                end
+            end
+        end
+    end
+
+    if Quire.scratchpad_hwnd and wm.is_window(Quire.scratchpad_hwnd) then
+        wm.cloak_window(Quire.scratchpad_hwnd, false)
+        if wm.set_topmost then
+            wm.set_topmost(Quire.scratchpad_hwnd, false)
+        end
+        wm.move_window(Quire.scratchpad_hwnd, wx + 80, wy + 80, math.floor(ww * 0.7), math.floor(wh * 0.7))
+    end
+
+    for hwnd, _ in pairs(Quire.floating_windows) do
+        if wm.is_window(hwnd) then
+            wm.cloak_window(hwnd, false)
+            if wm.set_topmost then
+                wm.set_topmost(hwnd, false)
+            end
+        end
+    end
+end
+
 Quire.retile()
