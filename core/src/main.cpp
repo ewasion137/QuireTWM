@@ -20,6 +20,7 @@
 #define ID_TRAY_APP_BASE 2000
 
 #include "../include/alttab.hpp"
+#include "../include/isle.hpp"
 #include "../include/renderer.hpp"
 #include <chrono>
 #include <dwmapi.h>
@@ -36,6 +37,7 @@
 #include <vector>
 #include <windows.h>
 #include <windowsx.h>
+
 
 extern "C" {
 #include <lauxlib.h>
@@ -321,6 +323,17 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
             dx = static_cast<float>(raw);
         } else {
             dy = static_cast<float>(raw);
+        }
+    }
+
+    if (wParam == WM_LBUTTONDOWN && g_lua) {
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+        sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_down"];
+        if (fn.valid()) {
+            auto res = fn(ms->pt.x, ms->pt.y);
+            if (res.valid() && res.get<bool>()) {
+                return 1;
+            }
         }
     }
 
@@ -724,6 +737,8 @@ int main() {
         atexit(RestoreAllWindows);
 
         std::cout << "=== QuireTWM: Initializing ===" << std::endl;
+        Isle::Initialize();
+        Isle::RegisterLuaBindings(&lua);
         std::string configDir = GetConfigDirectory();
         std::string configPath = configDir + "\\config.lua";
 
@@ -907,7 +922,8 @@ int main() {
         });
 
         wm.set_function("move_window", [](size_t hwnd, double x, double y,
-                                          double w, double h, sol::optional<bool> opt_floating) {
+                                          double w, double h,
+                                          sol::optional<bool> opt_floating) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
                 return;
@@ -1415,7 +1431,9 @@ int main() {
 
             auto now = clock::now();
             if (now < next_frame) {
-                auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(next_frame - now);
+                auto diff =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        next_frame - now);
                 if (diff.count() > 0) {
                     Sleep(static_cast<DWORD>(diff.count()));
                 }
@@ -1452,7 +1470,7 @@ int main() {
             std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
             g_lua = nullptr;
         }
-
+        Isle::Shutdown();
         Shell_NotifyIconA(NIM_DELETE, &g_nid);
         UnhookWinEvent(hook_objects);
         UnhookWinEvent(hook_focus);

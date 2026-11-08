@@ -19,13 +19,15 @@ static ULONGLONG FileTimeToUint64(const FILETIME &ft) {
 }
 
 void Initialize() {
-    HRESULT hr = CoCreateInstance(
-        __uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
-        __uuidof(IMMDeviceEnumerator), reinterpret_cast<void **>(&g_deviceEnumerator));
+    HRESULT hr =
+        CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                         CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator),
+                         reinterpret_cast<void **>(&g_deviceEnumerator));
 
     if (SUCCEEDED(hr) && g_deviceEnumerator) {
         IMMDevice *defaultDevice = nullptr;
-        hr = g_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defaultDevice);
+        hr = g_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole,
+                                                         &defaultDevice);
         if (SUCCEEDED(hr) && defaultDevice) {
             defaultDevice->Activate(
                 __uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, nullptr,
@@ -122,15 +124,21 @@ float GetCpuUsage() {
 
     FILETIME idleTime, kernelTime, userTime;
     if (GetSystemTimes(&idleTime, &kernelTime, &userTime)) {
-        if (prevIdleTime.dwLowDateTime != 0 || prevIdleTime.dwHighDateTime != 0) {
-            ULONGLONG idle = FileTimeToUint64(idleTime) - FileTimeToUint64(prevIdleTime);
-            ULONGLONG kernel = FileTimeToUint64(kernelTime) - FileTimeToUint64(prevKernelTime);
-            ULONGLONG user = FileTimeToUint64(userTime) - FileTimeToUint64(prevUserTime);
+        if (prevIdleTime.dwLowDateTime != 0 ||
+            prevIdleTime.dwHighDateTime != 0) {
+            ULONGLONG idle =
+                FileTimeToUint64(idleTime) - FileTimeToUint64(prevIdleTime);
+            ULONGLONG kernel =
+                FileTimeToUint64(kernelTime) - FileTimeToUint64(prevKernelTime);
+            ULONGLONG user =
+                FileTimeToUint64(userTime) - FileTimeToUint64(prevUserTime);
             ULONGLONG total = kernel + user;
 
             if (total > 0) {
-                float usage = static_cast<float>(total - idle) * 100.0f / static_cast<float>(total);
-                lastCalculatedCpu = (usage < 0.0f) ? 0.0f : ((usage > 100.0f) ? 100.0f : usage);
+                float usage = static_cast<float>(total - idle) * 100.0f /
+                              static_cast<float>(total);
+                lastCalculatedCpu =
+                    (usage < 0.0f) ? 0.0f : ((usage > 100.0f) ? 100.0f : usage);
             }
         }
         prevIdleTime = idleTime;
@@ -161,13 +169,15 @@ std::string GetActiveMediaTitle() {
         return "";
 
     IMMDevice *pDevice = nullptr;
-    if (FAILED(g_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &pDevice)) || !pDevice)
+    if (FAILED(g_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole,
+                                                           &pDevice)) ||
+        !pDevice)
         return "";
 
     IAudioSessionManager2 *pSessionManager = nullptr;
-    HRESULT hr = pDevice->Activate(
-        __uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER, nullptr,
-        reinterpret_cast<void **>(&pSessionManager));
+    HRESULT hr =
+        pDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER,
+                          nullptr, reinterpret_cast<void **>(&pSessionManager));
 
     if (FAILED(hr) || !pSessionManager) {
         pDevice->Release();
@@ -177,7 +187,8 @@ std::string GetActiveMediaTitle() {
     IAudioSessionEnumerator *pSessionEnum = nullptr;
     std::string result = "";
 
-    if (SUCCEEDED(pSessionManager->GetSessionEnumerator(&pSessionEnum)) && pSessionEnum) {
+    if (SUCCEEDED(pSessionManager->GetSessionEnumerator(&pSessionEnum)) &&
+        pSessionEnum) {
         int count = 0;
         pSessionEnum->GetCount(&count);
 
@@ -191,7 +202,8 @@ std::string GetActiveMediaTitle() {
                     IAudioSessionControl2 *pSession2 = nullptr;
                     if (SUCCEEDED(pSession->QueryInterface(
                             __uuidof(IAudioSessionControl2),
-                            reinterpret_cast<void **>(&pSession2))) && pSession2) {
+                            reinterpret_cast<void **>(&pSession2))) &&
+                        pSession2) {
                         DWORD pid = 0;
                         pSession2->GetProcessId(&pid);
 
@@ -202,24 +214,30 @@ std::string GetActiveMediaTitle() {
                             };
                             WindowSearch search = {pid, nullptr};
 
-                            EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
-                                auto *s = reinterpret_cast<WindowSearch *>(lp);
-                                DWORD wpid = 0;
-                                GetWindowThreadProcessId(hwnd, &wpid);
-                                if (wpid == s->pid && IsWindowVisible(hwnd)) {
-                                    if (GetWindowTextLengthW(hwnd) > 0) {
-                                        s->found_hwnd = hwnd;
-                                        return FALSE;
+                            EnumWindows(
+                                [](HWND hwnd, LPARAM lp) -> BOOL {
+                                    auto *s =
+                                        reinterpret_cast<WindowSearch *>(lp);
+                                    DWORD wpid = 0;
+                                    GetWindowThreadProcessId(hwnd, &wpid);
+                                    if (wpid == s->pid &&
+                                        IsWindowVisible(hwnd)) {
+                                        if (GetWindowTextLengthW(hwnd) > 0) {
+                                            s->found_hwnd = hwnd;
+                                            return FALSE;
+                                        }
                                     }
-                                }
-                                return TRUE;
-                            }, reinterpret_cast<LPARAM>(&search));
+                                    return TRUE;
+                                },
+                                reinterpret_cast<LPARAM>(&search));
 
                             if (search.found_hwnd) {
                                 wchar_t wbuf[512] = {0};
                                 GetWindowTextW(search.found_hwnd, wbuf, 511);
                                 char ubuf[1024] = {0};
-                                WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, ubuf, sizeof(ubuf) - 1, nullptr, nullptr);
+                                WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, ubuf,
+                                                    sizeof(ubuf) - 1, nullptr,
+                                                    nullptr);
                                 result = ubuf;
                             }
                         }
@@ -267,4 +285,4 @@ void RegisterLuaBindings(sol::state *lua) {
     wm.set_function("get_media_title", []() { return GetActiveMediaTitle(); });
 }
 
-}
+} // namespace Isle
