@@ -9,6 +9,8 @@ package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua"
 local anims = require("animsdef")
 alttab = require("alttab")
 launcher = require("launcher")
+local isle = require("isle")
+Quire.isle = isle
 Quire.launcher = launcher
 Quire.alttab = alttab
 
@@ -451,7 +453,32 @@ function Quire.mark_scratchpad()
     trigger_hud()
 end
 
+Quire.on_mouse_down = function(mx, my)
+    if Quire.isle and Quire.isle.on_mouse_down then
+        return Quire.isle.on_mouse_down(mx, my)
+    end
+    return false
+end
+
+local original_on_keyboard_input = Quire.on_keyboard_input
+Quire.on_keyboard_input = function(vk, char, ctrl, shift)
+    if Quire.isle and Quire.isle.on_keyboard_input then
+        if Quire.isle.on_keyboard_input(vk, char, ctrl, shift) then
+            return true
+        end
+    end
+
+    if Quire.launcher_active and launcher.on_key then
+        return launcher.on_key(vk, char)
+    end
+    return false
+end
+
 Quire.on_mouse_move = function(mx, my)
+    if Quire.isle and Quire.isle.update_mouse then
+        Quire.isle.update_mouse(mx, my)
+    end
+
     if not Quire.config.focus_follows_mouse or Quire.overview_active then
         return
     end
@@ -1654,20 +1681,14 @@ Quire.on_render_overlay = function()
     if Quire.hooks.on_post_render then
         pcall(Quire.hooks.on_post_render, now, sw, sh)
     end
-
+    isle.update(now, dt)
+    isle.draw(now)
     alttab.draw()
     launcher.draw(1.0)
 end
 
 Quire.on_alttab_action = function(action_type)
     alttab.action(action_type)
-end
-
-Quire.on_keyboard_input = function(vk, char)
-    if Quire.launcher_active and launcher.on_key then
-        return launcher.on_key(vk, char)
-    end
-    return false
 end
 
 function Quire.toggle_launcher()
@@ -2097,5 +2118,7 @@ if Quire.autostart and type(Quire.autostart) == "table" then
         end
     end
 end
+
+isle.init()
 
 Quire.retile()

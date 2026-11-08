@@ -38,7 +38,6 @@
 #include <windows.h>
 #include <windowsx.h>
 
-
 extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
@@ -302,12 +301,31 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam,
 }
 
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode != HC_ACTION ||
-        (wParam != WM_MOUSEWHEEL && wParam != WM_MOUSEHWHEEL) || !g_lua) {
+    if (nCode != HC_ACTION || !g_lua) {
+        return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
+    }
+
+    if (wParam != WM_MOUSEWHEEL && wParam != WM_MOUSEHWHEEL &&
+        wParam != WM_LBUTTONDOWN) {
         return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
     }
 
     auto *ms = reinterpret_cast<MSLLHOOKSTRUCT *>(lParam);
+
+    if (wParam == WM_LBUTTONDOWN) {
+        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+        if (g_lua) {
+            sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_down"];
+            if (fn.valid()) {
+                auto res = fn(ms->pt.x, ms->pt.y);
+                if (res.valid() && res.get<bool>()) {
+                    return 1;
+                }
+            }
+        }
+        return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
+    }
+
     float dx = 0.0f;
     float dy = 0.0f;
     short raw = static_cast<short>(HIWORD(ms->mouseData));
@@ -323,17 +341,6 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
             dx = static_cast<float>(raw);
         } else {
             dy = static_cast<float>(raw);
-        }
-    }
-
-    if (wParam == WM_LBUTTONDOWN && g_lua) {
-        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-        sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_down"];
-        if (fn.valid()) {
-            auto res = fn(ms->pt.x, ms->pt.y);
-            if (res.valid() && res.get<bool>()) {
-                return 1;
-            }
         }
     }
 
@@ -375,18 +382,18 @@ static LRESULT CALLBACK InputKeyboardProc(int nCode, WPARAM wParam,
     }
 
     if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
-        BYTE kbdState[256] = {0};
+        bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        BYTE kbdState[256] = {0};
+        if (shift)
             kbdState[VK_SHIFT] = 0x80;
-        if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        if (ctrl)
             kbdState[VK_CONTROL] = 0x80;
         if (GetAsyncKeyState(VK_MENU) & 0x8000)
             kbdState[VK_MENU] = 0x80;
         if (GetKeyState(VK_CAPITAL) & 0x0001)
             kbdState[VK_CAPITAL] = 0x01;
-        if (GetKeyState(VK_NUMLOCK) & 0x0001)
-            kbdState[VK_NUMLOCK] = 0x01;
         kbdState[vk] = 0x80;
 
         HWND fg = GetForegroundWindow();
@@ -414,7 +421,7 @@ static LRESULT CALLBACK InputKeyboardProc(int nCode, WPARAM wParam,
         if (g_lua) {
             sol::protected_function fn = (*g_lua)["Quire"]["on_keyboard_input"];
             if (fn.valid()) {
-                auto ret = fn(static_cast<int>(vk), utf8_char);
+                auto ret = fn(static_cast<int>(vk), utf8_char, ctrl, shift);
                 if (ret.valid() && ret.get<bool>()) {
                     return 1;
                 }
@@ -737,8 +744,6 @@ int main() {
         atexit(RestoreAllWindows);
 
         std::cout << "=== QuireTWM: Initializing ===" << std::endl;
-        Isle::Initialize();
-        Isle::RegisterLuaBindings(&lua);
         std::string configDir = GetConfigDirectory();
         std::string configPath = configDir + "\\config.lua";
 
@@ -761,6 +766,9 @@ int main() {
         });
 
         auto wm = lua.create_named_table("wm");
+
+        Isle::Initialize();
+        Isle::RegisterLuaBindings(&lua);
 
         wm.set_function("get_class_name", [](size_t hwnd) {
             char class_name[256] = {0};
@@ -831,6 +839,54 @@ int main() {
 
         wm.set_function("is_toplevel", [](size_t hwnd) {
             return IsToplevelWindow(reinterpret_cast<HWND>(hwnd));
+        });
+
+        wm.set_function("get_clipboard_text", []() -> std::string {
+            if (!OpenClipboard(nullptr))
+                return "";
+            HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+            if (!hData) {
+                CloseClipboard();
+                return "";
+            }
+            wchar_t *pszText = static_cast<wchar_t *>(GlobalLock(hData));
+            if (!pszText) {
+                CloseClipboard();
+                return "";
+            }
+            int len = WideCharToMultiByte(CP_UTF8, 0, pszText, -1, nullptr, 0,
+                                          nullptr, nullptr);
+            std::string result(len > 0 ? len - 1 : 0, '\0');
+            if (len > 0) {
+                WideCharToMultiByte(CP_UTF8, 0, pszText, -1, result.data(), len,
+                                    nullptr, nullptr);
+            }
+            GlobalUnlock(hData);
+            CloseClipboard();
+            return result;
+        });
+
+        wm.set_function("set_clipboard_text", [](const std::string &text) {
+            if (!OpenClipboard(nullptr))
+                return false;
+            EmptyClipboard();
+            int wlen =
+                MultiByteToWideChar(CP_UTF8, 0, text.data(), -1, nullptr, 0);
+            if (wlen <= 0) {
+                CloseClipboard();
+                return false;
+            }
+            HGLOBAL hGlob = GlobalAlloc(GMEM_MOVEABLE, wlen * sizeof(wchar_t));
+            if (!hGlob) {
+                CloseClipboard();
+                return false;
+            }
+            wchar_t *pBuf = static_cast<wchar_t *>(GlobalLock(hGlob));
+            MultiByteToWideChar(CP_UTF8, 0, text.data(), -1, pBuf, wlen);
+            GlobalUnlock(hGlob);
+            SetClipboardData(CF_UNICODETEXT, hGlob);
+            CloseClipboard();
+            return true;
         });
 
         wm.set_function("get_foreground_window", []() {
