@@ -37,7 +37,6 @@
 #include <windows.h>
 #include <windowsx.h>
 
-
 extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
@@ -908,7 +907,7 @@ int main() {
         });
 
         wm.set_function("move_window", [](size_t hwnd, double x, double y,
-                                          double w, double h) {
+                                          double w, double h, sol::optional<bool> opt_floating) {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
                 return;
@@ -924,17 +923,7 @@ int main() {
                 return;
             }
 
-            bool wants_topmost = false;
-            if (g_lua) {
-                std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-                sol::protected_function is_f = (*g_lua)["Quire"]["is_floating"];
-                if (is_f.valid()) {
-                    auto res = is_f(hwnd);
-                    if (res.valid() && res.get<bool>())
-                        wants_topmost = true;
-                }
-            }
-
+            bool wants_topmost = opt_floating.value_or(false);
             HWND insertAfter = wants_topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
             bool is_currently_topmost =
                 (GetWindowLong(handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
@@ -942,7 +931,7 @@ int main() {
             RECT windowRect;
             GetWindowRect(handle, &windowRect);
 
-            RECT frameRect = {0};
+            static RECT frameRect;
             int lm = 0, tm = 0, rm = 0, bm = 0;
             if (SUCCEEDED(DwmGetWindowAttribute(handle,
                                                 DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -1426,14 +1415,9 @@ int main() {
 
             auto now = clock::now();
             if (now < next_frame) {
-                auto diff =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        next_frame - now);
-                if (diff.count() > 1) {
-                    Sleep(static_cast<DWORD>(diff.count() - 1));
-                }
-                while (clock::now() < next_frame) {
-                    YieldProcessor();
+                auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(next_frame - now);
+                if (diff.count() > 0) {
+                    Sleep(static_cast<DWORD>(diff.count()));
                 }
             }
             next_frame = clock::now() + frame_duration;

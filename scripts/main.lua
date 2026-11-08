@@ -508,6 +508,174 @@ Quire.on_mouse_move = function(mx, my)
     end
 end
 
+Quire.pending_session = {}
+
+local function serialize_table(val, indent)
+    indent = indent or ""
+    local t = type(val)
+    if t == "number" or t == "boolean" then
+        return tostring(val)
+    elseif t == "string" then
+        return string.format("%q", val)
+    elseif t == "table" then
+        local parts = {}
+        for k, v in pairs(val) do
+            local key_str = (type(k) == "string" and k:match("^[%a_][%w_]*$")) and k or
+                                ("[" .. serialize_table(k) .. "]")
+            table.insert(parts, indent .. "  " .. key_str .. " = " .. serialize_table(v, indent .. "  "))
+        end
+        return "{\n" .. table.concat(parts, ",\n") .. "\n" .. indent .. "}"
+    end
+    return "nil"
+end
+
+function Quire.save_session()
+    local session = {
+        current_ws = Quire.current_workspace,
+        workspaces = {}
+    }
+
+    for ws_id, ws in pairs(Quire.workspaces) do
+        if ws.columns and #ws.columns > 0 then
+            local cols_data = {}
+            for _, col in ipairs(ws.columns) do
+                local win_data = {}
+                for _, hwnd in ipairs(col.windows) do
+                    if wm.is_window(hwnd) then
+                        local proc = wm.get_process_name and wm.get_process_name(hwnd) or ""
+                        local class = wm.get_class_name(hwnd)
+                        local title = wm.get_window_title(hwnd)
+                        table.insert(win_data, {
+                            proc = proc,
+                            class = class,
+                            title = title
+                        })
+                    end
+                end
+                if #win_data > 0 then
+                    table.insert(cols_data, {
+                        width = col.width or Quire.config.default_column_width,
+                        windows = win_data
+                    })
+                end
+            end
+            if #cols_data > 0 then
+                session.workspaces[ws_id] = cols_data
+            end
+        end
+    end
+
+    local session_path = wm.get_config_path():gsub("config%.lua$", "session.lua")
+    local f = io.open(session_path, "w")
+    if f then
+        f:write("return " .. serialize_table(session))
+        f:close()
+        log("Session saved successfully!")
+        trigger_hud()
+    end
+end
+
+function Quire.restore_session()
+    local session_path = wm.get_config_path():gsub("config%.lua$", "session.lua")
+    local fn = loadfile(session_path)
+    if not fn then
+        log("No saved session found at " .. session_path)
+        return
+    end
+
+    local ok, session = pcall(fn)
+    if not ok or not session or not session.workspaces then
+        log("Failed to parse saved session")
+        return
+    end
+
+    local all_hwnds = wm.enumerate_windows and wm.enumerate_windows() or {}
+    local available_windows = {}
+
+    for _, hwnd in ipairs(all_hwnds) do
+        if not should_ignore(hwnd, wm.get_window_title(hwnd), wm.get_class_name(hwnd)) then
+            local proc = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
+            local class = wm.get_class_name(hwnd):lower()
+            table.insert(available_windows, {
+                hwnd = hwnd,
+                proc = proc,
+                class = class,
+                used = false
+            })
+        end
+    end
+
+    Quire.workspaces = {}
+    Quire.window_ws = {}
+    Quire.pending_session = {}
+
+    for ws_id, cols_data in pairs(session.workspaces) do
+        local ws = get_ws(ws_id)
+        ws.columns = {}
+
+        for c_idx, col_info in ipairs(cols_data) do
+            local col = {
+                width = col_info.width or Quire.config.default_column_width,
+                windows = {}
+            }
+
+            for _, saved_win in ipairs(col_info.windows) do
+                local target_proc = saved_win.proc:lower()
+                local target_class = saved_win.class:lower()
+                local matched_hwnd = nil
+
+                for _, candidate in ipairs(available_windows) do
+                    if not candidate.used and candidate.proc == target_proc then
+                        matched_hwnd = candidate.hwnd
+                        candidate.used = true
+                        break
+                    end
+                end
+
+                if matched_hwnd then
+                    table.insert(col.windows, matched_hwnd)
+                    Quire.window_ws[matched_hwnd] = ws_id
+                    if wm.track_window then
+                        wm.track_window(matched_hwnd)
+                    end
+                    if ws_id ~= Quire.current_workspace then
+                        wm.cloak_window(matched_hwnd, true)
+                    else
+                        wm.cloak_window(matched_hwnd, false)
+                    end
+                else
+                    if saved_win.proc ~= "" then
+                        wm.spawn(saved_win.proc)
+                        table.insert(Quire.pending_session, {
+                            proc = target_proc,
+                            ws_id = ws_id,
+                            c_idx = c_idx
+                        })
+                    end
+                end
+            end
+
+            if #col.windows > 0 then
+                table.insert(ws.columns, col)
+            end
+        end
+    end
+
+    if session.current_ws then
+        Quire.current_workspace = session.current_ws
+    end
+
+    local cur_ws = get_ws(Quire.current_workspace)
+    if #cur_ws.columns > 0 and #cur_ws.columns[1].windows > 0 then
+        Quire.focused_window = cur_ws.columns[1].windows[1]
+        wm.focus_window(Quire.focused_window)
+    end
+
+    log("Session restored!")
+    trigger_hud()
+    Quire.retile()
+end
+
 local function add_window(hwnd, title, class)
     if Quire.expecting_scratchpad then
         Quire.expecting_scratchpad = false
@@ -519,6 +687,35 @@ local function add_window(hwnd, title, class)
         end
         trigger_hud()
         return
+    end
+
+    local proc_name = (wm.get_process_name and wm.get_process_name(hwnd) or ""):lower()
+    for i, pending in ipairs(Quire.pending_session) do
+        if pending.proc == proc_name then
+            table.remove(Quire.pending_session, i)
+            local ws = get_ws(pending.ws_id)
+            if not ws.columns[pending.c_idx] then
+                ws.columns[pending.c_idx] = {
+                    width = Quire.config.default_column_width,
+                    windows = {}
+                }
+            end
+            table.insert(ws.columns[pending.c_idx].windows, hwnd)
+            Quire.window_ws[hwnd] = pending.ws_id
+            if wm.track_window then
+                wm.track_window(hwnd)
+            end
+            if pending.ws_id ~= Quire.current_workspace then
+                wm.cloak_window(hwnd, true)
+            else
+                wm.cloak_window(hwnd, false)
+                Quire.focused_window = hwnd
+                wm.focus_window(hwnd)
+            end
+            Quire.retile()
+            trigger_hud()
+            return
+        end
     end
 
     if Quire.floating_windows[hwnd] then
@@ -1374,6 +1571,7 @@ Quire.on_render_overlay = function()
         local is_smart = cfg.smart_gaps and (#ws.columns == 1 and #ws.columns[1].windows == 1) and
                              not Quire.overview_active
         local win_rounding = is_smart and 0 or math.floor(cfg.rounding * Quire.overview_zoom)
+        local border_thickness = (is_smart and cfg.smart_borders) and 0 or cfg.border_size
 
         for _, col in ipairs(ws.columns) do
             for _, hwnd in ipairs(col.windows) do
@@ -1386,48 +1584,42 @@ Quire.on_render_overlay = function()
                         local bw = curr.render_w or curr.w
                         local bh = curr.render_h or curr.h
 
-                        local win_ctx = {
-                            hwnd = hwnd,
-                            x = bx,
-                            y = by,
-                            w = bw,
-                            h = bh,
-                            active = is_active,
-                            time = now,
-                            title = wm.get_window_title(hwnd),
-                            class = wm.get_class_name(hwnd),
-                            process = wm.get_process_name and wm.get_process_name(hwnd) or "",
-                            rounding = win_rounding,
-                            thickness = (is_smart and cfg.smart_borders) and 0 or cfg.border_size
-                        }
-
                         local handled = false
                         if Quire.hooks.on_draw_window_border then
+                            local win_ctx = {
+                                hwnd = hwnd,
+                                x = bx,
+                                y = by,
+                                w = bw,
+                                h = bh,
+                                active = is_active,
+                                time = now,
+                                title = wm.get_window_title(hwnd),
+                                class = wm.get_class_name(hwnd),
+                                process = wm.get_process_name and wm.get_process_name(hwnd) or "",
+                                rounding = win_rounding,
+                                thickness = border_thickness
+                            }
                             local ok, res = pcall(Quire.hooks.on_draw_window_border, win_ctx)
                             if ok and res == true then
                                 handled = true
                             end
                         end
 
-                        if not handled and win_ctx.thickness > 0 then
+                        if not handled and border_thickness > 0 then
                             local col_color = is_active and cfg.border_active or cfg.border_inactive
                             local offset_x, offset_y = 0, 0
                             if is_active and anims.idle[cfg.idle_mode] then
                                 col_color, offset_x, offset_y = anims.idle[cfg.idle_mode](now, col_color)
                             end
 
-                            if ui.draw_shadow_rounded_rect then
-                                ui.draw_shadow_rounded_rect(bx, by, bw, bh, win_ctx.rounding, 0.0, 0.0, 0.0, 0.35, 10.0,
-                                    2.0)
+                            if is_active and ui.draw_glow_rounded_rect then
+                                ui.draw_glow_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_rounding,
+                                    col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, 1.0, 3.0)
                             end
 
-                            if ui.draw_glow_rounded_rect and is_active then
-                                ui.draw_glow_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding,
-                                    col_color[1], col_color[2], col_color[3], col_color[4] or 1.0, 1.2, 5.0)
-                            end
-
-                            ui.draw_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_ctx.rounding, col_color[1],
-                                col_color[2], col_color[3], col_color[4] or 1.0, win_ctx.thickness)
+                            ui.draw_rounded_rect(bx + offset_x, by + offset_y, bw, bh, win_rounding, col_color[1],
+                                col_color[2], col_color[3], col_color[4] or 1.0, border_thickness)
                         end
                     end
                 end
@@ -1809,6 +2001,8 @@ if not fn then
     Quire.bind("Alt+F", Quire.toggle_fullscreen)
     Quire.bind("Alt+V", Quire.toggle_floating)
     Quire.bind("Alt+D", Quire.cycle_column_preset)
+    Quire.bind("Alt+Shift+S", Quire.save_session)
+    Quire.bind("Alt+Shift+R", Quire.restore_session)
     Quire.bind("Alt+Space", Quire.toggle_launcher)
     Quire.bind("Alt+Return", launcher.commit)
     for i = 1, 9 do
@@ -1892,6 +2086,14 @@ function Quire.cleanup_for_exit()
             if wm.set_topmost then
                 wm.set_topmost(hwnd, false)
             end
+        end
+    end
+end
+
+if Quire.autostart and type(Quire.autostart) == "table" then
+    for _, app_cmd in ipairs(Quire.autostart) do
+        if type(app_cmd) == "string" and app_cmd ~= "" then
+            wm.spawn(app_cmd)
         end
     end
 end
