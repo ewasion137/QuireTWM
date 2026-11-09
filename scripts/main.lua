@@ -40,6 +40,7 @@ Quire.config = {
     move_easing = "spring",
     focus_follows_mouse = false,
     scratchpad_cmd = "alacritty.exe",
+    enable_isle = true,
     spring = {
         stiffness = 170,
         damping = 24,
@@ -454,7 +455,7 @@ function Quire.mark_scratchpad()
 end
 
 Quire.on_mouse_down = function(mx, my)
-    if Quire.isle and Quire.isle.on_mouse_down then
+    if Quire.config.enable_isle ~= false and Quire.isle and Quire.isle.on_mouse_down then
         return Quire.isle.on_mouse_down(mx, my)
     end
     return false
@@ -475,7 +476,7 @@ Quire.on_keyboard_input = function(vk, char, ctrl, shift)
 end
 
 Quire.on_mouse_move = function(mx, my)
-    if Quire.isle and Quire.isle.update_mouse then
+    if Quire.config.enable_isle ~= false and Quire.isle and Quire.isle.update_mouse then
         Quire.isle.update_mouse(mx, my)
     end
 
@@ -1681,8 +1682,10 @@ Quire.on_render_overlay = function()
     if Quire.hooks.on_post_render then
         pcall(Quire.hooks.on_post_render, now, sw, sh)
     end
-    isle.update(now, dt)
-    isle.draw(now)
+    if cfg.enable_isle ~= false then
+        isle.update(now, dt)
+        isle.draw(now)
+    end
     alttab.draw()
     launcher.draw(1.0)
 end

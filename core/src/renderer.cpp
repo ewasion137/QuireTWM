@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <cmath>
 
-
 static void utf8_to_wide(const std::string &src, std::wstring &dst) {
     if (src.empty()) {
         dst.clear();

@@ -18,8 +18,12 @@ end
 
 function anims.bezier(x1, y1, x2, y2)
     return function(t)
-        if t <= 0.0 then return 0.0 end
-        if t >= 1.0 then return 1.0 end
+        if t <= 0.0 then
+            return 0.0
+        end
+        if t >= 1.0 then
+            return 1.0
+        end
         local bt = solve_bezier_t(x1, x2, t)
         return 3.0 * (1.0 - bt) * (1.0 - bt) * bt * y1 + 3.0 * (1.0 - bt) * bt * bt * y2 + bt * bt * bt
     end
@@ -86,8 +90,12 @@ anims.easings = {
     end,
 
     elastic = function(t)
-        if t <= 0.0 then return 0.0 end
-        if t >= 1.0 then return 1.0 end
+        if t <= 0.0 then
+            return 0.0
+        end
+        if t >= 1.0 then
+            return 1.0
+        end
         return 1.0 - (2.0 ^ (-4.0 * t)) * math.cos(t * math.pi * 1.5)
     end
 }
@@ -98,12 +106,18 @@ local function hsv_to_rgb(h, s, v)
     local m = v - c
     local r, g, b = m, m, m
     local hi = math.floor(h * 6.0) % 6
-    if hi == 0 then r, g, b = c + m, x + m, m
-    elseif hi == 1 then r, g, b = x + m, c + m, m
-    elseif hi == 2 then r, g, b = m, c + m, x + m
-    elseif hi == 3 then r, g, b = m, x + m, c + m
-    elseif hi == 4 then r, g, b = x + m, m, c + m
-    elseif hi == 5 then r, g, b = c + m, m, x + m
+    if hi == 0 then
+        r, g, b = c + m, x + m, m
+    elseif hi == 1 then
+        r, g, b = x + m, c + m, m
+    elseif hi == 2 then
+        r, g, b = m, c + m, x + m
+    elseif hi == 3 then
+        r, g, b = m, x + m, c + m
+    elseif hi == 4 then
+        r, g, b = x + m, m, c + m
+    elseif hi == 5 then
+        r, g, b = c + m, m, x + m
     end
     return r, g, b
 end
@@ -200,10 +214,7 @@ function anims.compute_alt_tab_zoom(x, y, w, h, factor, sw, sh)
     local target_cx = cx + (win_cx - cx) * factor
     local target_cy = cy + (win_cy - cy) * factor
 
-    return math.floor(target_cx - target_w * 0.5),
-           math.floor(target_cy - target_h * 0.5),
-           target_w,
-           target_h
+    return math.floor(target_cx - target_w * 0.5), math.floor(target_cy - target_h * 0.5), target_w, target_h
 end
 
 function anims.calc_close_geometry(mode, progress, x, y, w, h, sh)

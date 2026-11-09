@@ -777,9 +777,7 @@ int main() {
             return std::string(class_name);
         });
 
-        wm.set_function("play_bell", []() {
-            MessageBeep(MB_ICONASTERISK);
-        });
+        wm.set_function("play_bell", []() { MessageBeep(MB_ICONASTERISK); });
 
         wm.set_function("get_process_name", [](size_t hwnd) {
             DWORD pid = 0;
