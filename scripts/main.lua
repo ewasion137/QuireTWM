@@ -9,7 +9,9 @@ package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua"
 local anims = require("animsdef")
 alttab = require("alttab")
 launcher = require("launcher")
+local minimap = require("minimap")
 local isle = require("isle")
+Quire.minimap = minimap
 Quire.isle = isle
 Quire.launcher = launcher
 Quire.alttab = alttab
@@ -46,6 +48,7 @@ Quire.config = {
         damping = 24,
         mass = 1.0
     },
+    enable_minimap = true,
     smart_gaps = true,
     smart_borders = false
 }
@@ -96,7 +99,9 @@ local hud_alpha = 0.0
 local hud_timer = 0.0
 
 local function trigger_hud()
-    hud_timer = 1.4
+    if Quire.minimap then
+        Quire.minimap.trigger(1.4)
+    end
 end
 
 function Quire.is_floating(hwnd)
@@ -455,6 +460,12 @@ function Quire.mark_scratchpad()
 end
 
 Quire.on_mouse_down = function(mx, my)
+    if Quire.config.enable_minimap ~= false and Quire.minimap and Quire.minimap.on_mouse_down then
+        if Quire.minimap.on_mouse_down(mx, my) then
+            return true
+        end
+    end
+
     if Quire.config.enable_isle ~= false and Quire.isle and Quire.isle.on_mouse_down then
         return Quire.isle.on_mouse_down(mx, my)
     end
@@ -1676,7 +1687,10 @@ Quire.on_render_overlay = function()
             log("HUD hook error: " .. tostring(err))
         end
     else
-        draw_hud(sw, sh, dt)
+        if cfg.enable_minimap ~= false then
+            minimap.update(dt)
+            minimap.draw(camera_x)
+        end
     end
 
     if Quire.hooks.on_post_render then
