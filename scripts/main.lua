@@ -5,16 +5,26 @@ HyprWin = Quire
 math.pow = math.pow or function(x, y)
     return x ^ y
 end
-package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua"
+package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua;./scripts/tiling/?.lua"
 local anims = require("animsdef")
 alttab = require("alttab")
 launcher = require("launcher")
 local minimap = require("minimap")
+local ribbon_layout = require("ribbon")
 local isle = require("isle")
 Quire.minimap = minimap
 Quire.isle = isle
 Quire.launcher = launcher
 Quire.alttab = alttab
+
+Quire.layouts = {
+    ribbon = ribbon_layout
+}
+
+local function get_layout(ws)
+    local mode = (ws and ws.mode) or Quire.config.tiling_mode or "ribbon"
+    return Quire.layouts[mode] or Quire.layouts.ribbon
+end
 
 Quire.theme = {
     rounding = 10,
@@ -274,6 +284,7 @@ function Quire.retile()
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
     local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
 
     local fs_win = nil
     for hwnd, _ in pairs(Quire.fullscreen_windows) do
@@ -295,36 +306,34 @@ function Quire.retile()
         return
     end
 
-    local cleaned_cols = {}
-    for _, col in ipairs(ws.columns) do
-        local valid_wins = {}
-        for _, hwnd in ipairs(col.windows) do
-            if wm.is_window(hwnd) and not Quire.floating_windows[hwnd] then
-                table.insert(valid_wins, hwnd)
-            end
-        end
-        if #valid_wins > 0 then
-            col.windows = valid_wins
-            table.insert(cleaned_cols, col)
-        end
-    end
-    ws.columns = cleaned_cols
+    layout.clean_columns(ws, function(hwnd)
+        return wm.is_window(hwnd) and not Quire.floating_windows[hwnd]
+    end)
 
     if Quire.animating_ws then
-        layout_columns(Quire.animating_ws, wx, wy, ww, wh, cfg)
-    end
-    local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
-
-    local is_scrolling = get_wall_time() < (Quire.scroll_active_until or 0.0)
-
-    if not is_scrolling and Quire.focused_window and not Quire.floating_windows[Quire.focused_window] then
-        local target = Quire.window_targets[Quire.focused_window]
-        if target then
-            camera_target_x = (target.world_x - wx) - math.floor((ww - target.w) / 2)
+        local anim_ws = get_ws(Quire.animating_ws)
+        local anim_layout = get_layout(anim_ws)
+        local anim_targets = anim_layout.arrange(anim_ws, wx, wy, ww, wh, cfg, nil, false)
+        for h, t in pairs(anim_targets) do
+            Quire.window_targets[h] = t
         end
     end
 
-    local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
+    local is_scrolling = get_wall_time() < (Quire.scroll_active_until or 0.0)
+    local check_focus = (not is_scrolling and not Quire.floating_windows[Quire.focused_window]) and Quire.focused_window or nil
+
+    local targets, target_cam_x, max_cam_x, total_w = layout.arrange(
+        ws, wx, wy, ww, wh, cfg, check_focus, Quire.overview_active
+    )
+
+    for h, t in pairs(targets) do
+        Quire.window_targets[h] = t
+    end
+
+    if target_cam_x and not is_scrolling then
+        camera_target_x = target_cam_x
+    end
+
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
 
     for _, c in pairs(Quire.window_currents) do
@@ -721,9 +730,7 @@ local function add_window(hwnd, title, class)
         Quire.floating_windows[hwnd] = true
         Quire.scratchpad_hwnd = hwnd
         Quire.scratchpad_visible = true
-        if wm.track_window then
-            wm.track_window(hwnd)
-        end
+        if wm.track_window then wm.track_window(hwnd) end
         trigger_hud()
         return
     end
@@ -741,9 +748,7 @@ local function add_window(hwnd, title, class)
             end
             table.insert(ws.columns[pending.c_idx].windows, hwnd)
             Quire.window_ws[hwnd] = pending.ws_id
-            if wm.track_window then
-                wm.track_window(hwnd)
-            end
+            if wm.track_window then wm.track_window(hwnd) end
             if pending.ws_id ~= Quire.current_workspace then
                 wm.cloak_window(hwnd, true)
             else
@@ -761,9 +766,7 @@ local function add_window(hwnd, title, class)
         return
     end
     if apply_rules(hwnd, title, class) then
-        if wm.track_window then
-            wm.track_window(hwnd)
-        end
+        if wm.track_window then wm.track_window(hwnd) end
         return
     end
 
@@ -773,18 +776,8 @@ local function add_window(hwnd, title, class)
     end
 
     local ws = get_ws(Quire.current_workspace)
-    local active_col = Quire.find_window_pos(Quire.focused_window)
-
-    local new_col = {
-        width = Quire.config.default_column_width,
-        windows = {hwnd}
-    }
-
-    if active_col and active_col <= #ws.columns then
-        table.insert(ws.columns, active_col + 1, new_col)
-    else
-        table.insert(ws.columns, new_col)
-    end
+    local layout = get_layout(ws)
+    layout.add_window(ws, hwnd, Quire.focused_window, Quire.config.default_column_width)
 
     if wm.track_window then
         wm.track_window(hwnd)
@@ -803,7 +796,6 @@ local function remove_window(hwnd, is_destroy)
     if wm.set_topmost then
         wm.set_topmost(hwnd, false)
     end
-
     if is_destroy and wm.untrack_window then
         wm.untrack_window(hwnd)
     end
@@ -837,24 +829,19 @@ local function remove_window(hwnd, is_destroy)
         return
     end
 
-    local col_idx, row_idx, ws, ws_id = Quire.find_window_pos(hwnd)
+    local col_idx, row_idx, ws = Quire.find_window_pos(hwnd)
     if not col_idx then
         return
     end
 
-    table.remove(ws.columns[col_idx].windows, row_idx)
-    if #ws.columns[col_idx].windows == 0 then
-        table.remove(ws.columns, col_idx)
-    end
+    local layout = get_layout(ws)
+    local next_focus = layout.remove_window(ws, hwnd)
 
     if Quire.focused_window == hwnd then
-        local target_col = ws.columns[col_idx] or ws.columns[col_idx - 1]
-        if target_col and #target_col.windows > 0 then
-            Quire.focused_window = target_col.windows[1]
+        Quire.focused_window = next_focus
+        if next_focus then
             Quire.suppress_switch_until = get_wall_time() + 0.4
-            wm.focus_window(Quire.focused_window)
-        else
-            Quire.focused_window = nil
+            wm.focus_window(next_focus)
         end
     end
 
@@ -1025,23 +1012,13 @@ function Quire.move_to_workspace(target_ws)
 end
 
 function Quire.cycle_column_preset()
-    local col_idx, _, ws = Quire.find_window_pos(Quire.focused_window)
-    if not col_idx or not ws or not ws.columns or not ws.columns[col_idx] then
-        return
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+    if layout.cycle_preset then
+        layout.cycle_preset(ws, Quire.focused_window)
+        trigger_hud()
+        Quire.retile()
     end
-    local col = ws.columns[col_idx]
-
-    local presets = {1.0, 0.666, 0.50}
-    local next_ratio = presets[1]
-    for i, p in ipairs(presets) do
-        if math.abs(col.width - p) < 0.05 then
-            next_ratio = presets[(i % #presets) + 1]
-            break
-        end
-    end
-    col.width = next_ratio
-    trigger_hud()
-    Quire.retile()
 end
 
 function Quire.cycle_workspace(step)
@@ -1092,29 +1069,15 @@ function Quire.focus_direction(dir)
         return
     end
 
-    local col_idx, row_idx, ws = Quire.find_window_pos(Quire.focused_window)
-    if not col_idx then
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+    local target = layout.focus_direction(ws, Quire.focused_window, dir)
+
+    if not target then
         local fg = wm.get_foreground_window()
         if fg and fg ~= 0 then
-            col_idx, row_idx, ws = Quire.find_window_pos(fg)
-            if col_idx then
-                Quire.focused_window = fg
-            end
+            target = layout.focus_direction(ws, fg, dir)
         end
-    end
-    if not col_idx or not ws or not ws.columns then
-        return
-    end
-
-    local target = nil
-    if dir == "left" and col_idx > 1 then
-        target = ws.columns[col_idx - 1].windows[math.min(row_idx, #ws.columns[col_idx - 1].windows)]
-    elseif dir == "right" and col_idx < #ws.columns then
-        target = ws.columns[col_idx + 1].windows[math.min(row_idx, #ws.columns[col_idx + 1].windows)]
-    elseif dir == "up" and row_idx > 1 then
-        target = ws.columns[col_idx].windows[row_idx - 1]
-    elseif dir == "down" and row_idx < #ws.columns[col_idx].windows then
-        target = ws.columns[col_idx].windows[row_idx + 1]
     end
 
     if target then
@@ -1125,20 +1088,14 @@ function Quire.focus_direction(dir)
     trigger_hud()
 end
 
-function Quire.move_column(dir)
-    local col_idx, _, ws = Quire.find_window_pos(Quire.focused_window)
-    if not col_idx or not ws or not ws.columns or not ws.columns[col_idx] then
-        return
-    end
 
-    if dir == "left" and col_idx > 1 then
-        ws.columns[col_idx], ws.columns[col_idx - 1] = ws.columns[col_idx - 1], ws.columns[col_idx]
+function Quire.move_column(dir)
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+    if layout.move_column and layout.move_column(ws, Quire.focused_window, dir) then
         Quire.retile()
-    elseif dir == "right" and col_idx < #ws.columns then
-        ws.columns[col_idx], ws.columns[col_idx + 1] = ws.columns[col_idx + 1], ws.columns[col_idx]
-        Quire.retile()
+        trigger_hud()
     end
-    trigger_hud()
 end
 
 function Quire.toggle_floating()
