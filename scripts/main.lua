@@ -320,11 +320,11 @@ function Quire.retile()
     end
 
     local is_scrolling = get_wall_time() < (Quire.scroll_active_until or 0.0)
-    local check_focus = (not is_scrolling and not Quire.floating_windows[Quire.focused_window]) and Quire.focused_window or nil
+    local check_focus =
+        (not is_scrolling and not Quire.floating_windows[Quire.focused_window]) and Quire.focused_window or nil
 
-    local targets, target_cam_x, max_cam_x, total_w = layout.arrange(
-        ws, wx, wy, ww, wh, cfg, check_focus, Quire.overview_active
-    )
+    local targets, target_cam_x, max_cam_x, total_w = layout.arrange(ws, wx, wy, ww, wh, cfg, check_focus,
+        Quire.overview_active)
 
     for h, t in pairs(targets) do
         Quire.window_targets[h] = t
@@ -730,7 +730,9 @@ local function add_window(hwnd, title, class)
         Quire.floating_windows[hwnd] = true
         Quire.scratchpad_hwnd = hwnd
         Quire.scratchpad_visible = true
-        if wm.track_window then wm.track_window(hwnd) end
+        if wm.track_window then
+            wm.track_window(hwnd)
+        end
         trigger_hud()
         return
     end
@@ -748,7 +750,9 @@ local function add_window(hwnd, title, class)
             end
             table.insert(ws.columns[pending.c_idx].windows, hwnd)
             Quire.window_ws[hwnd] = pending.ws_id
-            if wm.track_window then wm.track_window(hwnd) end
+            if wm.track_window then
+                wm.track_window(hwnd)
+            end
             if pending.ws_id ~= Quire.current_workspace then
                 wm.cloak_window(hwnd, true)
             else
@@ -766,7 +770,9 @@ local function add_window(hwnd, title, class)
         return
     end
     if apply_rules(hwnd, title, class) then
-        if wm.track_window then wm.track_window(hwnd) end
+        if wm.track_window then
+            wm.track_window(hwnd)
+        end
         return
     end
 
@@ -1087,7 +1093,6 @@ function Quire.focus_direction(dir)
     end
     trigger_hud()
 end
-
 
 function Quire.move_column(dir)
     local ws = get_ws(Quire.current_workspace)

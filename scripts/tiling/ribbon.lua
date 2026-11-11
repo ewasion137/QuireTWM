@@ -80,7 +80,9 @@ function ribbon.add_window(ws, hwnd, focused_hwnd, default_width)
                     break
                 end
             end
-            if active_col_idx then break end
+            if active_col_idx then
+                break
+            end
         end
     end
 
@@ -106,7 +108,9 @@ function ribbon.remove_window(ws, hwnd)
                 break
             end
         end
-        if found_col then break end
+        if found_col then
+            break
+        end
     end
 
     if not found_col then
@@ -136,7 +140,9 @@ function ribbon.focus_direction(ws, focused_hwnd, dir)
                 break
             end
         end
-        if col_idx then break end
+        if col_idx then
+            break
+        end
     end
 
     if not col_idx then
@@ -166,7 +172,9 @@ function ribbon.move_column(ws, focused_hwnd, dir)
                 break
             end
         end
-        if col_idx then break end
+        if col_idx then
+            break
+        end
     end
 
     if not col_idx then
@@ -192,7 +200,9 @@ function ribbon.cycle_preset(ws, focused_hwnd)
                 break
             end
         end
-        if target_col then break end
+        if target_col then
+            break
+        end
     end
 
     if not target_col then
