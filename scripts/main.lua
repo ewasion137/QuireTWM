@@ -11,6 +11,7 @@ alttab = require("alttab")
 launcher = require("launcher")
 local minimap = require("minimap")
 local ribbon_layout = require("ribbon")
+local master_layout = require("master")
 local isle = require("isle")
 Quire.minimap = minimap
 Quire.isle = isle
@@ -18,7 +19,8 @@ Quire.launcher = launcher
 Quire.alttab = alttab
 
 Quire.layouts = {
-    ribbon = ribbon_layout
+    ribbon = ribbon_layout,
+    master = master_layout
 }
 
 local function get_layout(ws)
@@ -1025,6 +1027,26 @@ function Quire.cycle_column_preset()
         trigger_hud()
         Quire.retile()
     end
+end
+
+function Quire.cycle_layout()
+    local ws = get_ws(Quire.current_workspace)
+    local cur_mode = ws.mode or Quire.config.tiling_mode or "ribbon"
+
+    local modes = {"ribbon", "master"}
+    local next_mode = modes[1]
+
+    for i, m in ipairs(modes) do
+        if m == cur_mode then
+            next_mode = modes[(i % #modes) + 1]
+            break
+        end
+    end
+
+    ws.mode = next_mode
+    log("Switched workspace " .. Quire.current_workspace .. " layout to: " .. next_mode:upper())
+    trigger_hud()
+    Quire.retile()
 end
 
 function Quire.cycle_workspace(step)
