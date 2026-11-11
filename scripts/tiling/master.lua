@@ -3,10 +3,13 @@ master.name = "master"
 
 local function ensure_structure(ws)
     if not ws.columns or #ws.columns == 0 then
-        ws.columns = {
-            { width = 0.55, windows = {} },
-            { width = 0.45, windows = {} }
-        }
+        ws.columns = {{
+            width = 0.55,
+            windows = {}
+        }, {
+            width = 0.45,
+            windows = {}
+        }}
         return
     end
 
@@ -18,10 +21,13 @@ local function ensure_structure(ws)
     end
 
     local m_ratio = (ws.columns[1] and ws.columns[1].width) or 0.55
-    ws.columns = {
-        { width = m_ratio, windows = {} },
-        { width = 1.0 - m_ratio, windows = {} }
-    }
+    ws.columns = {{
+        width = m_ratio,
+        windows = {}
+    }, {
+        width = 1.0 - m_ratio,
+        windows = {}
+    }}
 
     if #all_wins > 0 then
         table.insert(ws.columns[1].windows, all_wins[1])
@@ -35,13 +41,17 @@ function master.clean_columns(ws, is_valid_fn)
     ensure_structure(ws)
     local valid_m = {}
     for _, w in ipairs(ws.columns[1].windows) do
-        if is_valid_fn(w) then table.insert(valid_m, w) end
+        if is_valid_fn(w) then
+            table.insert(valid_m, w)
+        end
     end
     ws.columns[1].windows = valid_m
 
     local valid_s = {}
     for _, w in ipairs(ws.columns[2].windows) do
-        if is_valid_fn(w) then table.insert(valid_s, w) end
+        if is_valid_fn(w) then
+            table.insert(valid_s, w)
+        end
     end
     ws.columns[2].windows = valid_s
 

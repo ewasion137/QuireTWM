@@ -6,13 +6,16 @@ math.pow = math.pow or function(x, y)
     return x ^ y
 end
 package.path = package.path .. ";./scripts/?.lua;./scripts/ui/?.lua;./scripts/tiling/?.lua"
+
+local minimap = require("minimap")
+local isle = require("isle")
 local anims = require("animsdef")
 alttab = require("alttab")
 launcher = require("launcher")
-local minimap = require("minimap")
 local ribbon_layout = require("ribbon")
 local master_layout = require("master")
-local isle = require("isle")
+local dwindle_layout = require("dwindle")
+
 Quire.minimap = minimap
 Quire.isle = isle
 Quire.launcher = launcher
@@ -20,7 +23,8 @@ Quire.alttab = alttab
 
 Quire.layouts = {
     ribbon = ribbon_layout,
-    master = master_layout
+    master = master_layout,
+    dwindle = dwindle_layout
 }
 
 local function get_layout(ws)
@@ -1031,9 +1035,9 @@ end
 
 function Quire.cycle_layout()
     local ws = get_ws(Quire.current_workspace)
-    local cur_mode = ws.mode or Quire.config.tiling_mode or "ribbon"
+    local cur_mode = ws.mode or Quire.config.tiling_mode or "dwindle"
 
-    local modes = {"ribbon", "master"}
+    local modes = {"dwindle", "ribbon", "master"}
     local next_mode = modes[1]
 
     for i, m in ipairs(modes) do
