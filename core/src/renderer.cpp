@@ -140,6 +140,10 @@ void Renderer::begin_draw() {
         init(hwnd_target);
     }
     if (target) {
+        float vx = static_cast<float>(GetSystemMetrics(SM_XVIRTUALSCREEN));
+        float vy = static_cast<float>(GetSystemMetrics(SM_YVIRTUALSCREEN));
+        target->SetTransform(D2D1::Matrix3x2F::Translation(-vx, -vy));
+
         target->BeginDraw();
         frame_index++;
         if ((frame_index % 300) == 0) {

@@ -13,8 +13,6 @@ local anims = require("animsdef")
 alttab = require("alttab")
 launcher = require("launcher")
 local ribbon_layout = require("ribbon")
-local master_layout = require("master")
-local dwindle_layout = require("dwindle")
 
 Quire.minimap = minimap
 Quire.isle = isle
@@ -22,9 +20,7 @@ Quire.launcher = launcher
 Quire.alttab = alttab
 
 Quire.layouts = {
-    ribbon = ribbon_layout,
-    master = master_layout,
-    dwindle = dwindle_layout
+    ribbon = ribbon_layout
 }
 
 local function get_layout(ws)
@@ -1037,7 +1033,7 @@ function Quire.cycle_layout()
     local ws = get_ws(Quire.current_workspace)
     local cur_mode = ws.mode or Quire.config.tiling_mode or "dwindle"
 
-    local modes = {"dwindle", "ribbon", "master"}
+    local modes = {"ribbon", "infinite"}
     local next_mode = modes[1]
 
     for i, m in ipairs(modes) do

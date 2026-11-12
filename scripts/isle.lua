@@ -547,7 +547,7 @@ function isle.draw(opt_now)
     local t = Quire.theme
     local accent = Quire.config.border_active or t.active_border_color
 
-    state.x = wx + math.floor((sw - state.w) * 0.5)
+    state.x = wx + math.floor((ww - state.w) * 0.5)
     state.y = wy + 6
 
     local ix = state.x

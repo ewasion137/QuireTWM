@@ -10,7 +10,6 @@
 #include <tlhelp32.h>
 #include <windows.h>
 
-
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.Control.h>
 
