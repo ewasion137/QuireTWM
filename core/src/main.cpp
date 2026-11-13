@@ -1486,41 +1486,58 @@ int main() {
 
             int fps = g_target_fps > 0 ? g_target_fps : 100;
             auto frame_duration = std::chrono::nanoseconds(1000000000LL / fps);
-
             auto now = clock::now();
-            if (now < next_frame) {
-                auto diff =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        next_frame - now);
-                if (diff.count() > 0) {
-                    Sleep(static_cast<DWORD>(diff.count()));
-                }
-            }
-            next_frame = clock::now() + frame_duration;
 
-            if (IsWindowVisible(g_overlay_hwnd)) {
-                g_current_renderer = &g_renderer;
-                g_renderer.begin_draw();
-                g_renderer.clear(0, 0, 0, 0);
+            if (now >= next_frame) {
+                next_frame = now + frame_duration;
 
-                if (g_lua) {
-                    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                if (IsWindowVisible(g_overlay_hwnd)) {
+                    g_current_renderer = &g_renderer;
+                    g_renderer.begin_draw();
+                    g_renderer.clear(0, 0, 0, 0);
+
                     if (g_lua) {
-                        sol::protected_function render =
-                            (*g_lua)["Quire"]["on_render_overlay"];
-                        if (render.valid()) {
-                            auto res = render();
-                            if (!res.valid()) {
-                                sol::error err = res;
-                                std::cerr
-                                    << "[Quire Render Error]: " << err.what()
-                                    << std::endl;
+                        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                        if (g_lua) {
+                            sol::protected_function render =
+                                (*g_lua)["Quire"]["on_render_overlay"];
+                            if (render.valid()) {
+                                auto res = render();
+                                if (!res.valid()) {
+                                    static auto s_last_err =
+                                        clock::now() - std::chrono::seconds(10);
+                                    static std::string s_last_msg;
+                                    sol::error err = res;
+                                    std::string msg = err.what();
+                                    if (msg != s_last_msg ||
+                                        (clock::now() - s_last_err) >
+                                            std::chrono::seconds(3)) {
+                                        s_last_msg = msg;
+                                        s_last_err = clock::now();
+                                        std::cerr
+                                            << "[Quire Render Error]: " << msg
+                                            << std::endl;
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                g_renderer.end_draw();
+                    g_renderer.end_draw();
+                }
+            }
+
+            now = clock::now();
+            if (now < next_frame) {
+                auto diff_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        next_frame - now)
+                        .count();
+                if (diff_ms > 0) {
+                    MsgWaitForMultipleObjects(0, NULL, FALSE,
+                                              static_cast<DWORD>(diff_ms),
+                                              QS_ALLINPUT);
+                }
             }
         }
 

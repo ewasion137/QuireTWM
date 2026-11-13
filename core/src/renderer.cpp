@@ -105,7 +105,7 @@ bool Renderer::init(HWND hwnd) {
     }
 
     UINT dpi = GetDpiForWindow(hwnd);
-    current_dpi = (dpi > 0) ? static_cast<float>(dpi) : 96.0f;
+    current_dpi = 96.0f;
 
     RECT rc;
     GetClientRect(hwnd, &rc);

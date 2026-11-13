@@ -13,6 +13,7 @@ local anims = require("animsdef")
 alttab = require("alttab")
 launcher = require("launcher")
 local ribbon_layout = require("ribbon")
+local infinite_layout = require("infinite")
 
 Quire.minimap = minimap
 Quire.isle = isle
@@ -20,7 +21,8 @@ Quire.launcher = launcher
 Quire.alttab = alttab
 
 Quire.layouts = {
-    ribbon = ribbon_layout
+    ribbon = ribbon_layout,
+    infinite = infinite_layout
 }
 
 local function get_layout(ws)
@@ -325,15 +327,22 @@ function Quire.retile()
     local check_focus =
         (not is_scrolling and not Quire.floating_windows[Quire.focused_window]) and Quire.focused_window or nil
 
-    local targets, target_cam_x, max_cam_x, total_w = layout.arrange(ws, wx, wy, ww, wh, cfg, check_focus,
-        Quire.overview_active)
+    local targets, target_cam_x, max_cam_x, total_w, target_cam_y =
+        layout.arrange(ws, wx, wy, ww, wh, cfg, check_focus, Quire.overview_active)
 
     for h, t in pairs(targets) do
         Quire.window_targets[h] = t
     end
 
-    if target_cam_x and not is_scrolling then
-        camera_target_x = target_cam_x
+    if not is_scrolling then
+        if target_cam_x then
+            camera_target_x = target_cam_x
+        end
+        if target_cam_y then
+            camera_target_y = target_cam_y
+        else
+            camera_target_y = 0.0
+        end
     end
 
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
@@ -1031,17 +1040,8 @@ end
 
 function Quire.cycle_layout()
     local ws = get_ws(Quire.current_workspace)
-    local cur_mode = ws.mode or Quire.config.tiling_mode or "dwindle"
-
-    local modes = {"ribbon", "infinite"}
-    local next_mode = modes[1]
-
-    for i, m in ipairs(modes) do
-        if m == cur_mode then
-            next_mode = modes[(i % #modes) + 1]
-            break
-        end
-    end
+    local cur_mode = ws.mode or Quire.config.tiling_mode or "ribbon"
+    local next_mode = (cur_mode == "ribbon") and "infinite" or "ribbon"
 
     ws.mode = next_mode
     log("Switched workspace " .. Quire.current_workspace .. " layout to: " .. next_mode:upper())
@@ -1423,7 +1423,8 @@ Quire.on_render_overlay = function()
     end
 
     if not ease_fn or easing_name == "spring" then
-        camera_y, camera_vy = solve_spring(camera_y, camera_vy, 0.0, sp.stiffness, sp.damping, sp.mass, dt)
+        camera_y, camera_vy = solve_spring(camera_y, camera_vy, camera_target_y or 0.0, sp.stiffness, sp.damping,
+            sp.mass, dt)
     else
         if Quire.animating_ws then
             if not Quire.cam_anim_y or Quire.cam_anim_y.ws ~= Quire.current_workspace then
@@ -1820,6 +1821,19 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
 
     if math.abs(dx) < 0.01 then
         return false
+    end
+
+    local ws = get_ws(Quire.current_workspace)
+    if ws.mode == "infinite" then
+        local speed = cfg.trackpad_speed or 1.2
+        camera_target_x = camera_target_x + (dx * speed)
+        camera_target_y = camera_target_y - (dy * speed)
+        Quire.scroll_active_until = now + 0.16
+        Quire.is_touch_scrolling = true
+        for _, c in pairs(Quire.window_currents) do
+            c.needs_sync = true
+        end
+        return true
     end
 
     local speed = cfg.trackpad_speed or 1.2

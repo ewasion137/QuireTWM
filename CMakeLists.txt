@@ -27,7 +27,7 @@ endif()
 
 add_subdirectory(core)
 
-add_executable(QuireTWM 
+add_executable(QuireTWM
     core/src/main.cpp
     core/src/app.rc
 )
@@ -37,20 +37,21 @@ if(MSVC)
     target_compile_options(QuireTWM PRIVATE /W4)
 endif()
 
-target_link_libraries(QuireTWM PRIVATE 
-    core_lib 
-    lua_lib 
-    user32 
-    dwmapi 
-    dcomp 
-    d2d1 
-    dwrite 
+target_link_libraries(QuireTWM PRIVATE
+    core_lib
+    lua_lib
+    user32
+    dwmapi
+    dcomp
+    d2d1
+    dwrite
     shell32
     winmm
 )
 
-add_custom_command(TARGET QuireTWM POST_BUILD
+add_custom_target(sync_scripts ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
     "$<TARGET_FILE_DIR:QuireTWM>/scripts"
 )
+add_dependencies(QuireTWM sync_scripts)

@@ -138,6 +138,14 @@ function isle.update(now, dt)
     state.wave_anim = state.wave_anim + dt * 5.0
 
     if now - state.last_stat_time > 0.8 then
+        if Quire.focused_window and wm.is_window(Quire.focused_window) then
+            local p = wm.get_process_name and wm.get_process_name(Quire.focused_window) or ""
+            local wt = wm.get_window_title(Quire.focused_window) or ""
+            state.cached_win_info = (p ~= "") and (p .. " - " .. wt) or wt
+        else
+            state.cached_win_info = "Desktop"
+        end
+
         state.last_stat_time = now
         if wm.get_cpu_usage then
             state.cached_cpu = math.floor(wm.get_cpu_usage())
@@ -542,10 +550,14 @@ end
 
 function isle.draw(opt_now)
     local now = opt_now or state.now or get_now()
-    local sw = wm.get_screen_size()
-    local wx, wy = wm.get_work_area()
+    local sw, sh = wm.get_screen_size()
+    local wx, wy, ww, wh = wm.get_work_area()
     local t = Quire.theme
     local accent = Quire.config.border_active or t.active_border_color
+
+    ww = (ww and ww > 0) and ww or (sw or 1920)
+    wx = wx or 0
+    wy = wy or 0
 
     state.x = wx + math.floor((ww - state.w) * 0.5)
     state.y = wy + 6
@@ -800,12 +812,12 @@ function isle.draw(opt_now)
             by_bar = by_bar + 30
         end
 
-        local win_info = Quire.focused_window and
-                             (wm.get_process_name(Quire.focused_window) .. " - " ..
-                                 wm.get_window_title(Quire.focused_window)) or "Desktop"
+        local win_info = state.cached_win_info
         if ui.measure_text(win_info, 9, t.font_family) > (iw - 40) then
             win_info = win_info:sub(1, 46) .. "..."
         end
+        ui.draw_text(win_info, ix + 20, by_bar + 4, 9, 0.50, 0.54, 0.62, 0.9, t.font_family)
+
         ui.draw_text(win_info, ix + 20, by_bar + 4, 9, 0.50, 0.54, 0.62, 0.9, t.font_family)
     end
 end

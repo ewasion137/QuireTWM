@@ -74,8 +74,12 @@ function infinite.arrange(ws, wx, wy, ww, wh, cfg, focused_hwnd, overview_active
             w = node.w,
             h = node.h
         }
-        if node.x < min_x then min_x = node.x end
-        if (node.x + node.w) > max_x then max_x = node.x + node.w end
+        if node.x < min_x then
+            min_x = node.x
+        end
+        if (node.x + node.w) > max_x then
+            max_x = node.x + node.w
+        end
     end
 
     if count == 0 then
@@ -155,15 +159,19 @@ function infinite.focus_direction(ws, focused_hwnd, dir)
             local dy = ly - cy
 
             local valid = false
-            if dir == "left" and dx < -10 then valid = true
-            elseif dir == "right" and dx > 10 then valid = true
-            elseif dir == "up" and dy < -10 then valid = true
-            elseif dir == "down" and dy > 10 then valid = true end
+            if dir == "left" and dx < -10 then
+                valid = true
+            elseif dir == "right" and dx > 10 then
+                valid = true
+            elseif dir == "up" and dy < -10 then
+                valid = true
+            elseif dir == "down" and dy > 10 then
+                valid = true
+            end
 
             if valid then
-                local dist = (dir == "left" or dir == "right")
-                    and (math.abs(dx) + math.abs(dy) * 2.0)
-                    or (math.abs(dy) + math.abs(dx) * 2.0)
+                local dist = (dir == "left" or dir == "right") and (math.abs(dx) + math.abs(dy) * 2.0) or
+                                 (math.abs(dy) + math.abs(dx) * 2.0)
 
                 if dist < best_dist then
                     best_dist = dist
@@ -182,11 +190,16 @@ function infinite.cycle_preset(ws, focused_hwnd)
 
     local _, _, ww, wh = wm.get_work_area()
     local node = ws.infinite_nodes[focused_hwnd]
-    local presets = {
-        { w = math.floor(ww * 0.50), h = math.floor(wh * 0.55) },
-        { w = math.floor(ww * 0.65), h = math.floor(wh * 0.70) },
-        { w = math.floor(ww * 0.80), h = math.floor(wh * 0.85) }
-    }
+    local presets = {{
+        w = math.floor(ww * 0.50),
+        h = math.floor(wh * 0.55)
+    }, {
+        w = math.floor(ww * 0.65),
+        h = math.floor(wh * 0.70)
+    }, {
+        w = math.floor(ww * 0.80),
+        h = math.floor(wh * 0.85)
+    }}
 
     local next_p = presets[1]
     for i, p in ipairs(presets) do

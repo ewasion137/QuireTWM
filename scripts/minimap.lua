@@ -12,9 +12,13 @@ local state = {
 }
 
 local function solve_spring(curr, vel, target, stiffness, damping, mass, dt)
-    if dt <= 0.0 then return curr, vel end
+    if dt <= 0.0 then
+        return curr, vel
+    end
     local diff = curr - target
-    if math.abs(diff) < 0.01 and math.abs(vel) < 0.01 then return target, 0.0 end
+    if math.abs(diff) < 0.01 and math.abs(vel) < 0.01 then
+        return target, 0.0
+    end
     dt = math.min(dt, 0.033)
     local omega0 = math.sqrt(stiffness / mass)
     local zeta = damping / (2.0 * math.sqrt(stiffness * mass))
@@ -115,7 +119,8 @@ function minimap.draw(camera_x)
         end
     end
     local rw_text = ui.measure_text(cur_ratio_str, 9, t.font_family)
-    ui.draw_text(cur_ratio_str, panel_x + panel_w - rw_text - 16, panel_y + 8, 9, accent[1], accent[2], accent[3], a, t.font_family)
+    ui.draw_text(cur_ratio_str, panel_x + panel_w - rw_text - 16, panel_y + 8, 9, accent[1], accent[2], accent[3], a,
+        t.font_family)
 
     local inner_margin_x = 16.0
     local inner_margin_top = 24.0
