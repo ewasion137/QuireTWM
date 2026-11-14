@@ -15,32 +15,39 @@ local function sync_columns(ws)
 end
 
 local function ensure_nodes(ws, wx, wy, ww, wh, cfg)
-    if ws.infinite_nodes then
-        return
-    end
-
-    ws.infinite_nodes = {}
+    ws.infinite_nodes = ws.infinite_nodes or {}
     if not ws.columns or #ws.columns == 0 then
         return
     end
 
     local default_w = math.floor(ww * 0.55)
     local default_h = math.floor(wh * 0.60)
-    local cur_x = wx + cfg.gaps_out
-    local cur_y = wy + cfg.gaps_out
+    local max_right = wx + cfg.gaps_out
 
-    for _, col in ipairs(ws.columns) do
-        for _, hwnd in ipairs(col.windows) do
-            ws.infinite_nodes[hwnd] = {
-                x = cur_x,
-                y = cur_y,
-                w = default_w,
-                h = default_h
-            }
-            cur_x = cur_x + default_w + cfg.gaps_in
+    for _, node in pairs(ws.infinite_nodes) do
+        if (node.x + node.w + cfg.gaps_in) > max_right then
+            max_right = node.x + node.w + cfg.gaps_in
         end
     end
-    sync_columns(ws)
+
+    local added = false
+    for _, col in ipairs(ws.columns) do
+        for _, hwnd in ipairs(col.windows) do
+            if not ws.infinite_nodes[hwnd] then
+                ws.infinite_nodes[hwnd] = {
+                    x = max_right,
+                    y = wy + cfg.gaps_out,
+                    w = default_w,
+                    h = default_h
+                }
+                max_right = max_right + default_w + cfg.gaps_in
+                added = true
+            end
+        end
+    end
+    if added then
+        sync_columns(ws)
+    end
 end
 
 function infinite.clean_columns(ws, is_valid_fn)
@@ -87,13 +94,13 @@ function infinite.arrange(ws, wx, wy, ww, wh, cfg, focused_hwnd, overview_active
     end
 
     local total_w = math.max(ww, max_x - min_x)
-    local target_cam_x = 0.0
-    local target_cam_y = 0.0
+    local target_cam_x = nil
+    local target_cam_y = nil
 
     if focused_hwnd and ws.infinite_nodes[focused_hwnd] then
         local node = ws.infinite_nodes[focused_hwnd]
         target_cam_x = (node.x - wx) - math.floor((ww - node.w) * 0.5)
-        target_cam_y = (node.y - wy) - math.floor((wh - node.h) * 0.5)
+        target_cam_y = (wy + math.floor((wh - node.h) * 0.5)) - node.y
     end
 
     return targets, target_cam_x, total_w, total_w, target_cam_y
@@ -183,6 +190,27 @@ function infinite.focus_direction(ws, focused_hwnd, dir)
     return best_hwnd
 end
 
+function infinite.move_column(ws, focused_hwnd, dir)
+    if not ws.infinite_nodes or not focused_hwnd or not ws.infinite_nodes[focused_hwnd] then
+        return false
+    end
+
+    local node = ws.infinite_nodes[focused_hwnd]
+    local step = 220
+    if dir == "left" then
+        node.x = node.x - step
+    elseif dir == "right" then
+        node.x = node.x + step
+    elseif dir == "up" then
+        node.y = node.y - step
+    elseif dir == "down" then
+        node.y = node.y + step
+    else
+        return false
+    end
+    return true
+end
+
 function infinite.cycle_preset(ws, focused_hwnd)
     if not ws.infinite_nodes or not focused_hwnd or not ws.infinite_nodes[focused_hwnd] then
         return
@@ -214,3 +242,4 @@ function infinite.cycle_preset(ws, focused_hwnd)
 end
 
 return infinite
+

@@ -347,9 +347,14 @@ function Quire.retile()
 
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
 
+    if (ws.mode or cfg.tiling_mode) ~= "infinite" then
+        camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
+    end
+
     for _, c in pairs(Quire.window_currents) do
         c.needs_sync = true
     end
+
 end
 
 function Quire.toggle_overview()
@@ -1426,28 +1431,18 @@ Quire.on_render_overlay = function()
         camera_y, camera_vy = solve_spring(camera_y, camera_vy, camera_target_y or 0.0, sp.stiffness, sp.damping,
             sp.mass, dt)
     else
-        if Quire.animating_ws then
-            if not Quire.cam_anim_y or Quire.cam_anim_y.ws ~= Quire.current_workspace then
-                Quire.cam_anim_y = {
-                    ws = Quire.current_workspace,
-                    start_y = camera_y,
-                    target = 0.0,
-                    start_time = now,
-                    duration = anim_dur
-                }
-            end
-            local ct = math.min(1.0, (now - Quire.cam_anim_y.start_time) / Quire.cam_anim_y.duration)
-            camera_y = Quire.cam_anim_y.start_y + (Quire.cam_anim_y.target - Quire.cam_anim_y.start_y) * ease_fn(ct)
-            if ct >= 1.0 then
-                camera_y = 0.0
-                camera_vy = 0.0
-                Quire.cam_anim_y = nil
-            else
-                camera_vy = 10.0
-            end
-        else
-            camera_y, camera_vy = solve_spring(camera_y, camera_vy, 0.0, sp.stiffness, sp.damping, sp.mass, dt)
+        local target_y = camera_target_y or 0.0
+        if not Quire.cam_anim_y or Quire.cam_anim_y.target ~= target_y then
+            Quire.cam_anim_y = {
+                start_y = camera_y,
+                target = target_y,
+                start_time = now,
+                duration = anim_dur
+            }
         end
+        local ct = math.min(1.0, (now - Quire.cam_anim_y.start_time) / Quire.cam_anim_y.duration)
+        camera_y = Quire.cam_anim_y.start_y + (Quire.cam_anim_y.target - Quire.cam_anim_y.start_y) * ease_fn(ct)
+        camera_vy = (ct >= 1.0) and 0.0 or 10.0
     end
 
     if math.abs(camera_y) < 1.0 and math.abs(camera_vy) < 1.0 then
@@ -1494,7 +1489,7 @@ Quire.on_render_overlay = function()
 
         Quire.scratchpad_y, Quire.scratchpad_vy = solve_spring(Quire.scratchpad_y, Quire.scratchpad_vy, target_sp_y,
             sp.stiffness, sp.damping, sp.mass, dt)
-        wm.move_window(Quire.scratchpad_hwnd, sp_x, math.floor(Quire.scratchpad_y), sp_w, sp_h)
+        wm.move_window(Quire.scratchpad_hwnd, sp_x, math.floor(Quire.scratchpad_y), sp_w, sp_h, true)
 
         if not Quire.scratchpad_visible and Quire.scratchpad_y < -(sp_h + 80) then
             wm.cloak_window(Quire.scratchpad_hwnd, true)
@@ -1561,9 +1556,29 @@ Quire.on_render_overlay = function()
                         local changed = (curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or curr.ah ~=
                                             final_h)
                         if (changed or curr.needs_sync) and final_x > -final_w - 100 and final_x < sw + 100 then
-                            wm.move_window(hwnd, final_x, final_y, final_w, final_h)
-                            curr.ax, curr.ay, curr.aw, curr.ah = final_x, final_y, final_w, final_h
-                            curr.needs_sync = false
+                            local is_visible_on_screen = (final_x + final_w > wx) and (final_x < wx + ww) and
+                                                             (final_y + final_h > wy) and (final_y < wy + wh)
+
+                            if not is_visible_on_screen then
+                                if not curr.cloaked then
+                                    wm.cloak_window(hwnd, true)
+                                    curr.cloaked = true
+                                end
+                            else
+                                if curr.cloaked then
+                                    wm.cloak_window(hwnd, false)
+                                    curr.cloaked = false
+                                    curr.needs_sync = true
+                                end
+                                local changed = (curr.ax ~= final_x or curr.ay ~= final_y or curr.aw ~= final_w or
+                                                    curr.ah ~= final_h)
+                                if changed or curr.needs_sync then
+                                    wm.move_window(hwnd, final_x, final_y, final_w, final_h, false)
+                                    curr.ax, curr.ay, curr.aw, curr.ah = final_x, final_y, final_w, final_h
+                                    curr.needs_sync = false
+                                end
+                            end
+
                         end
                     end
                 end
@@ -1592,6 +1607,7 @@ Quire.on_render_overlay = function()
     end
 
     if not fg_covers_screen then
+        ui.push_clip(wx, wy, ww, wh)
         local is_smart = cfg.smart_gaps and (#ws.columns == 1 and #ws.columns[1].windows == 1) and
                              not Quire.overview_active
         local win_rounding = is_smart and 0 or math.floor(cfg.rounding * Quire.overview_zoom)
@@ -1649,6 +1665,8 @@ Quire.on_render_overlay = function()
                 end
             end
         end
+        ui.pop_clip()
+
     end
 
     if Quire.hooks.on_draw_hud then
@@ -1804,8 +1822,22 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
 
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
-    local total_w = layout_columns(Quire.current_workspace, wx, wy, ww, wh, cfg)
-    local max_cam_x = math.max(0, (total_w - cfg.gaps_in + cfg.gaps_out - wx) - ww)
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+
+    if layout.name == "infinite" then
+        local speed = cfg.trackpad_speed or 1.2
+        camera_target_x = camera_target_x + (dx * speed)
+        camera_target_y = camera_target_y + (dy * speed)
+        Quire.scroll_active_until = now + 0.16
+        Quire.is_touch_scrolling = true
+        for _, c in pairs(Quire.window_currents) do
+            c.needs_sync = true
+        end
+        return true
+    end
+
+    local _, _, max_cam_x = layout.arrange(ws, wx, wy, ww, wh, cfg, nil, Quire.overview_active)
 
     if Quire.overview_active then
         local scroll_step = (math.abs(dx) > 0.01) and dx or -dy
@@ -1823,19 +1855,6 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
         return false
     end
 
-    local ws = get_ws(Quire.current_workspace)
-    if ws.mode == "infinite" then
-        local speed = cfg.trackpad_speed or 1.2
-        camera_target_x = camera_target_x + (dx * speed)
-        camera_target_y = camera_target_y - (dy * speed)
-        Quire.scroll_active_until = now + 0.16
-        Quire.is_touch_scrolling = true
-        for _, c in pairs(Quire.window_currents) do
-            c.needs_sync = true
-        end
-        return true
-    end
-
     local speed = cfg.trackpad_speed or 1.2
     camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x + (dx * speed)))
     Quire.scroll_active_until = now + 0.16
@@ -1846,6 +1865,7 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
     end
 
     return true
+
 end
 
 Quire.on_ipc_request = function(req)

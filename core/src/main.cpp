@@ -628,6 +628,9 @@ void RestoreAllWindows() {
         if (!IsWindow(hwnd))
             continue;
 
+        SetWindowRgn(hwnd, NULL, TRUE);
+        ShowWindow(hwnd, SW_SHOWNA);
+
         BOOL false_val = FALSE;
         DwmSetWindowAttribute(hwnd, 13, &false_val, sizeof(false_val));
         int zero = 0;
@@ -1046,6 +1049,38 @@ int main() {
 
             SetWindowPos(handle, insertAfter, final_x, final_y, final_w,
                          final_h, flags);
+
+            if (!wants_topmost) {
+                RECT wa = {0};
+                if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0)) {
+                    bool straddling =
+                        (x < wa.left - 1.0 || y < wa.top - 1.0 ||
+                         (x + w) > wa.right + 1.0 || (y + h) > wa.bottom + 1.0);
+                    if (straddling) {
+                        int cl =
+                            (std::max)(0, static_cast<int>(wa.left) - final_x);
+                        int ct =
+                            (std::max)(0, static_cast<int>(wa.top) - final_y);
+                        int cr =
+                            (std::min)(final_w,
+                                       static_cast<int>(wa.right) - final_x);
+                        int cb =
+                            (std::min)(final_h,
+                                       static_cast<int>(wa.bottom) - final_y);
+                        if (cr > cl && cb > ct) {
+                            HRGN rgn = CreateRectRgn(cl, ct, cr, cb);
+                            if (!SetWindowRgn(handle, rgn, TRUE)) {
+                                DeleteObject(rgn);
+                            }
+                        }
+                    } else {
+                        RECT rgn_box;
+                        if (GetWindowRgnBox(handle, &rgn_box) != ERROR) {
+                            SetWindowRgn(handle, NULL, TRUE);
+                        }
+                    }
+                }
+            }
         });
 
         wm.set_function("move_to_monitor", [](size_t hwnd_val, int dir) {
@@ -1181,12 +1216,14 @@ int main() {
             HWND handle = reinterpret_cast<HWND>(hwnd);
             if (!IsWindow(handle))
                 return;
-            BOOL val = cloak ? TRUE : FALSE;
-            DwmSetWindowAttribute(handle, 13, &val, sizeof(val));
-            int cval = cloak ? 1 : 0;
-            DwmSetWindowAttribute(handle, DWMWA_CLOAKED, &cval, sizeof(cval));
-            if (!cloak) {
-                ShowWindow(handle, SW_SHOWNA);
+            if (cloak) {
+                if (IsWindowVisible(handle)) {
+                    ShowWindowAsync(handle, SW_HIDE);
+                }
+            } else {
+                if (!IsWindowVisible(handle)) {
+                    ShowWindowAsync(handle, SW_SHOWNA);
+                }
             }
         });
 
