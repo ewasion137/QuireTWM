@@ -780,6 +780,10 @@ int main() {
             return std::string(class_name);
         });
 
+        wm.set_function("is_key_down", [](int vk) {
+            return (GetAsyncKeyState(vk) & 0x8000) != 0;
+        });
+
         wm.set_function("play_bell", []() { MessageBeep(MB_ICONASTERISK); });
 
         wm.set_function("get_process_name", [](size_t hwnd) {
@@ -1505,9 +1509,11 @@ int main() {
             static POINT s_last_mouse_pos = {0, 0};
             POINT cur_pt;
             if (GetCursorPos(&cur_pt)) {
+                bool panning = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
+                int thresh = panning ? 1 : 6;
                 int dx = std::abs(cur_pt.x - s_last_mouse_pos.x);
                 int dy = std::abs(cur_pt.y - s_last_mouse_pos.y);
-                if (dx >= 6 || dy >= 6) {
+                if (dx >= thresh || dy >= thresh) {
                     s_last_mouse_pos = cur_pt;
                     if (g_lua) {
                         std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);

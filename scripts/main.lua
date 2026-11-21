@@ -123,8 +123,12 @@ function Quire.is_floating(hwnd)
 end
 
 function Quire.is_tiled(hwnd)
-    local col_idx = Quire.find_window_pos(hwnd)
-    return (col_idx ~= nil) and not Quire.floating_windows[hwnd]
+    local col_idx, _, ws = Quire.find_window_pos(hwnd)
+    if not col_idx or Quire.floating_windows[hwnd] then
+        return false
+    end
+    local mode = (ws and ws.mode) or Quire.config.tiling_mode or "ribbon"
+    return mode ~= "infinite"
 end
 
 local function get_ws(ws_id)
@@ -284,7 +288,7 @@ local function layout_columns(ws_id, wx, wy, ww, wh, cfg)
     return cur_x - gaps_in + gaps_out
 end
 
-function Quire.retile()
+function Quire.retile(center_cam)
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
     local ws = get_ws(Quire.current_workspace)
@@ -334,27 +338,27 @@ function Quire.retile()
         Quire.window_targets[h] = t
     end
 
+    local is_inf = (layout.name == "infinite")
     if not is_scrolling then
-        if target_cam_x then
-            camera_target_x = target_cam_x
-        end
-        if target_cam_y then
-            camera_target_y = target_cam_y
-        else
-            camera_target_y = 0.0
+        if not is_inf or center_cam then
+            if target_cam_x then
+                camera_target_x = target_cam_x
+            end
+            if target_cam_y then
+                camera_target_y = target_cam_y
+            else
+                camera_target_y = 0.0
+            end
         end
     end
 
-    camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
-
-    if (ws.mode or cfg.tiling_mode) ~= "infinite" then
+    if not is_inf then
         camera_target_x = math.max(0, math.min(max_cam_x, camera_target_x))
     end
 
     for _, c in pairs(Quire.window_currents) do
         c.needs_sync = true
     end
-
 end
 
 function Quire.toggle_overview()
@@ -511,9 +515,32 @@ Quire.on_keyboard_input = function(vk, char, ctrl, shift)
     return false
 end
 
+local last_pan_mx, last_pan_my = nil, nil
+
 Quire.on_mouse_move = function(mx, my)
     if Quire.config.enable_isle ~= false and Quire.isle and Quire.isle.update_mouse then
         Quire.isle.update_mouse(mx, my)
+    end
+
+    local ws = get_ws(Quire.current_workspace)
+    local is_panning = (ws.mode == "infinite") and wm.is_key_down and wm.is_key_down(0x04) and wm.is_key_down(0x12)
+    if is_panning then
+        if last_pan_mx and last_pan_my then
+            local pdx = mx - last_pan_mx
+            local pdy = my - last_pan_my
+            camera_target_x = camera_target_x - pdx
+            camera_target_y = camera_target_y + pdy
+            camera_x = camera_target_x
+            camera_y = camera_target_y
+            Quire.scroll_active_until = get_wall_time() + 0.12
+            for _, c in pairs(Quire.window_currents) do
+                c.needs_sync = true
+            end
+        end
+        last_pan_mx, last_pan_my = mx, my
+        return
+    else
+        last_pan_mx, last_pan_my = nil, nil
     end
 
     if not Quire.config.focus_follows_mouse or Quire.overview_active then
@@ -1116,8 +1143,9 @@ function Quire.focus_direction(dir)
     if target then
         Quire.focused_window = target
         wm.focus_window(target)
-        Quire.retile()
+        Quire.retile(true)
     end
+
     trigger_hud()
 end
 
@@ -1248,10 +1276,27 @@ Quire.dispatch_event = function(event_type, hwnd, title)
         if get_wall_time() < (Quire.scroll_active_until or 0.0) then
             return
         end
-        local col, _, _, ws_id = Quire.find_window_pos(hwnd)
+        local col, _, ws, ws_id = Quire.find_window_pos(hwnd)
         if col and not Quire.floating_windows[hwnd] and ws_id == Quire.current_workspace then
-            local rx, ry = wm.get_window_rect(hwnd)
-            if rx and rx > -1000 then
+            local rx, ry, rw, rh = wm.get_window_rect(hwnd)
+            if rx and rx > -10000 then
+                local layout = get_layout(ws)
+                if layout.name == "infinite" and layout.update_node then
+                    local wx_pos = rx + math.floor(camera_x)
+                    local wy_pos = ry - math.floor(camera_y)
+                    layout.update_node(ws, hwnd, wx_pos, wy_pos, rw, rh)
+                    local curr = Quire.window_currents[hwnd]
+                    if curr then
+                        curr.world_x = wx_pos
+                        curr.world_y = wy_pos
+                        curr.w = rw
+                        curr.h = rh
+                        curr.ax, curr.ay, curr.aw, curr.ah = rx, ry, rw, rh
+                    end
+                    Quire.retile(false)
+                    return
+                end
+
                 local curr = Quire.window_currents[hwnd]
                 if curr then
                     curr.x = rx
@@ -1826,15 +1871,18 @@ Quire.on_trackpad_scroll = function(dx, dy, ctrl_down, alt_down)
     local layout = get_layout(ws)
 
     if layout.name == "infinite" then
-        local speed = cfg.trackpad_speed or 1.2
-        camera_target_x = camera_target_x + (dx * speed)
-        camera_target_y = camera_target_y + (dy * speed)
-        Quire.scroll_active_until = now + 0.16
-        Quire.is_touch_scrolling = true
-        for _, c in pairs(Quire.window_currents) do
-            c.needs_sync = true
+        if alt_down then
+            local speed = cfg.trackpad_speed or 1.2
+            camera_target_x = camera_target_x + (dx * speed)
+            camera_target_y = camera_target_y + (dy * speed)
+            Quire.scroll_active_until = now + 0.16
+            Quire.is_touch_scrolling = true
+            for _, c in pairs(Quire.window_currents) do
+                c.needs_sync = true
+            end
+            return true
         end
-        return true
+        return false
     end
 
     local _, _, max_cam_x = layout.arrange(ws, wx, wy, ww, wh, cfg, nil, Quire.overview_active)

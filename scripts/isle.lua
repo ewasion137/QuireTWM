@@ -49,6 +49,21 @@ local state = {
     wave_anim = 0.0
 }
 
+local function utf8_sub(s, max_chars)
+    if not s then
+        return ""
+    end
+    local len = utf8.len(s)
+    if not len or len <= max_chars then
+        return s
+    end
+    local offset = utf8.offset(s, max_chars + 1)
+    if offset then
+        return s:sub(1, offset - 1) .. "..."
+    end
+    return s
+end
+
 local function solve_spring(curr, vel, target, stiffness, damping, mass, dt)
     if dt <= 0.0 then
         return curr, vel
@@ -617,8 +632,9 @@ function isle.draw(opt_now)
         local text_x = (is_media and not state.stopwatch_running and not state.timer_running) and (ix + 74) or (ix + 56)
         local max_w = iw - 170
         if ui.measure_text(mid_text, 10, t.font_family) > max_w then
-            mid_text = mid_text:sub(1, 28) .. "..."
+            mid_text = utf8_sub(mid_text, 26)
         end
+
         ui.draw_text(mid_text, text_x, iy + 10, 10, 0.90, 0.92, 0.96, 0.95, t.font_family)
 
         local stat_str = string.format("%d%% | %d%%", state.cached_cpu, state.cached_ram)
@@ -659,8 +675,9 @@ function isle.draw(opt_now)
     if state.active_tab == "media" then
         local track_title = (state.last_track ~= "") and state.last_track or "No active media session"
         if ui.measure_text(track_title, 11, t.font_family) > (iw - 150) then
-            track_title = track_title:sub(1, 38) .. "..."
+            track_title = utf8_sub(track_title, 36)
         end
+
         ui.draw_text(track_title, ix + 20, iy + 66, 11, 0.94, 0.96, 1.0, 1.0, t.font_family)
 
         local btn_y = iy + 60
@@ -814,8 +831,9 @@ function isle.draw(opt_now)
 
         local win_info = state.cached_win_info
         if ui.measure_text(win_info, 9, t.font_family) > (iw - 40) then
-            win_info = win_info:sub(1, 46) .. "..."
+            win_info = utf8_sub(win_info, 44)
         end
+
         ui.draw_text(win_info, ix + 20, by_bar + 4, 9, 0.50, 0.54, 0.62, 0.9, t.font_family)
 
         ui.draw_text(win_info, ix + 20, by_bar + 4, 9, 0.50, 0.54, 0.62, 0.9, t.font_family)
