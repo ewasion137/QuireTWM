@@ -7,6 +7,14 @@ class state;
 }
 
 namespace Isle {
+
+struct MediaInfo {
+    std::string title;
+    bool playing = false;
+    double pos = 0.0;
+    double dur = 0.0;
+};
+
 void Initialize();
 void Shutdown();
 void RegisterLuaBindings(sol::state *lua);
@@ -28,4 +36,6 @@ void MediaNext();
 void MediaPrev();
 
 std::string GetActiveMediaTitle();
-}
+MediaInfo GetMediaInfo();
+
+} // namespace Isle
