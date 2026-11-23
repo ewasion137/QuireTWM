@@ -300,26 +300,83 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam,
     }
 }
 
+struct FloatDragState {
+    std::atomic<bool> active{false};
+    std::atomic<bool> just_ended{false};
+    bool is_resize = false;
+    HWND hwnd = nullptr;
+    POINT start_pt{0, 0};
+    POINT last_pt{0, 0};
+    RECT start_rect{0, 0, 0, 0};
+};
+static FloatDragState g_drag;
+
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode != HC_ACTION || !g_lua) {
         return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
     }
 
     if (wParam != WM_MOUSEWHEEL && wParam != WM_MOUSEHWHEEL &&
-        wParam != WM_LBUTTONDOWN) {
+        wParam != WM_LBUTTONDOWN && wParam != WM_RBUTTONDOWN &&
+        wParam != WM_LBUTTONUP && wParam != WM_RBUTTONUP) {
         return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
     }
 
     auto *ms = reinterpret_cast<MSLLHOOKSTRUCT *>(lParam);
 
-    if (wParam == WM_LBUTTONDOWN) {
-        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
-        if (g_lua) {
-            sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_down"];
-            if (fn.valid()) {
-                auto res = fn(ms->pt.x, ms->pt.y);
-                if (res.valid() && res.get<bool>()) {
+    if (wParam == WM_LBUTTONUP || wParam == WM_RBUTTONUP) {
+        if (g_drag.active.load()) {
+            bool match = (g_drag.is_resize && wParam == WM_RBUTTONUP) ||
+                         (!g_drag.is_resize && wParam == WM_LBUTTONUP);
+            if (match) {
+                g_drag.active = false;
+                g_drag.just_ended = true;
+                return 1;
+            }
+        }
+        return CallNextHookEx(g_mouse_hook, nCode, wParam, lParam);
+    }
+
+    if (wParam == WM_LBUTTONDOWN || wParam == WM_RBUTTONDOWN) {
+        bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        if (alt) {
+            HWND target = GetAncestor(WindowFromPoint(ms->pt), GA_ROOT);
+            if (target && target != g_overlay_hwnd) {
+                bool is_float = false;
+                {
+                    std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                    if (g_lua) {
+                        sol::protected_function fn =
+                            (*g_lua)["Quire"]["is_floating"];
+                        if (fn.valid()) {
+                            auto res = fn(reinterpret_cast<size_t>(target));
+                            if (res.valid() && res.get<bool>()) {
+                                is_float = true;
+                            }
+                        }
+                    }
+                }
+                if (is_float) {
+                    g_drag.hwnd = target;
+                    g_drag.is_resize = (wParam == WM_RBUTTONDOWN);
+                    g_drag.start_pt = ms->pt;
+                    g_drag.last_pt = ms->pt;
+                    GetWindowRect(target, &g_drag.start_rect);
+                    g_drag.active = true;
                     return 1;
+                }
+            }
+        }
+
+        if (wParam == WM_LBUTTONDOWN) {
+            std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+            if (g_lua) {
+                sol::protected_function fn = (*g_lua)["Quire"]["on_mouse_down"];
+                if (fn.valid()) {
+                    auto res = fn(ms->pt.x, ms->pt.y);
+                    if (res.valid() && res.get<bool>()) {
+                        return 1;
+                    }
                 }
             }
         }
@@ -638,6 +695,7 @@ void RestoreAllWindows() {
 
         LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
         if (ex_style & WS_EX_LAYERED) {
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
             SetWindowLong(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED);
         }
 
@@ -1509,6 +1567,54 @@ int main() {
             static POINT s_last_mouse_pos = {0, 0};
             POINT cur_pt;
             if (GetCursorPos(&cur_pt)) {
+                if (g_drag.active.load()) {
+                    bool btn_down =
+                        (GetAsyncKeyState(g_drag.is_resize ? VK_RBUTTON
+                                                           : VK_LBUTTON) &
+                         0x8000) != 0;
+                    if (!btn_down || !IsWindow(g_drag.hwnd)) {
+                        g_drag.active = false;
+                        g_drag.just_ended = true;
+                    } else if (cur_pt.x != g_drag.last_pt.x ||
+                               cur_pt.y != g_drag.last_pt.y) {
+                        g_drag.last_pt = cur_pt;
+                        int dx = cur_pt.x - g_drag.start_pt.x;
+                        int dy = cur_pt.y - g_drag.start_pt.y;
+                        if (!g_drag.is_resize) {
+                            SetWindowPos(g_drag.hwnd, NULL,
+                                         g_drag.start_rect.left + dx,
+                                         g_drag.start_rect.top + dy, 0, 0,
+                                         SWP_NOSIZE | SWP_NOZORDER |
+                                             SWP_NOACTIVATE);
+                        } else {
+                            int nw = (std::max)(
+                                160L, (g_drag.start_rect.right -
+                                       g_drag.start_rect.left) +
+                                          dx);
+                            int nh = (std::max)(
+                                100L, (g_drag.start_rect.bottom -
+                                       g_drag.start_rect.top) +
+                                          dy);
+                            SetWindowPos(g_drag.hwnd, NULL, 0, 0, nw, nh,
+                                         SWP_NOMOVE | SWP_NOZORDER |
+                                             SWP_NOACTIVATE);
+                        }
+                    }
+                }
+
+                if (g_drag.just_ended.exchange(false)) {
+                    if (g_lua && g_drag.hwnd) {
+                        std::lock_guard<std::recursive_mutex> lock(g_lua_mutex);
+                        if (g_lua) {
+                            sol::protected_function fn =
+                                (*g_lua)["Quire"]["on_float_drag_end"];
+                            if (fn.valid()) {
+                                fn(reinterpret_cast<size_t>(g_drag.hwnd));
+                            }
+                        }
+                    }
+                }
+
                 bool panning = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
                 int thresh = panning ? 1 : 6;
                 int dx = std::abs(cur_pt.x - s_last_mouse_pos.x);

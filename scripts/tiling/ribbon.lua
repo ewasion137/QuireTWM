@@ -222,4 +222,83 @@ function ribbon.cycle_preset(ws, focused_hwnd)
     target_col.width = next_ratio
 end
 
+function ribbon.consume_window(ws, focused_hwnd, dir)
+    local col_idx, row_idx = nil, nil
+    for c_idx, col in ipairs(ws.columns) do
+        for r_idx, w in ipairs(col.windows) do
+            if w == focused_hwnd then
+                col_idx = c_idx
+                row_idx = r_idx
+                break
+            end
+        end
+        if col_idx then
+            break
+        end
+    end
+    if not col_idx then
+        return false
+    end
+
+    local target_idx = (dir == "right") and (col_idx + 1) or (col_idx - 1)
+    if target_idx < 1 or target_idx > #ws.columns then
+        return false
+    end
+
+    local target_col = ws.columns[target_idx]
+    local src_col = ws.columns[col_idx]
+    table.remove(src_col.windows, row_idx)
+    if #src_col.windows == 0 then
+        table.remove(ws.columns, col_idx)
+    end
+    table.insert(target_col.windows, focused_hwnd)
+    return true
+end
+
+function ribbon.expel_window(ws, focused_hwnd, dir)
+    local col_idx, row_idx = nil, nil
+    for c_idx, col in ipairs(ws.columns) do
+        for r_idx, w in ipairs(col.windows) do
+            if w == focused_hwnd then
+                col_idx = c_idx
+                row_idx = r_idx
+                break
+            end
+        end
+        if col_idx then
+            break
+        end
+    end
+    if not col_idx then
+        return false
+    end
+
+    local src_col = ws.columns[col_idx]
+    if #src_col.windows <= 1 then
+        return false
+    end
+
+    table.remove(src_col.windows, row_idx)
+    local new_col = {
+        width = src_col.width or 1.0,
+        windows = {focused_hwnd}
+    }
+    local insert_idx = (dir == "left") and col_idx or (col_idx + 1)
+    table.insert(ws.columns, insert_idx, new_col)
+    return true
+end
+
+function ribbon.resize_column(ws, focused_hwnd, delta)
+    for _, col in ipairs(ws.columns) do
+        for _, w in ipairs(col.windows) do
+            if w == focused_hwnd then
+                local cur = col.width or 1.0
+                col.width = math.max(0.20, math.min(1.0, cur + delta))
+                return true
+            end
+        end
+    end
+    return false
+end
+
 return ribbon

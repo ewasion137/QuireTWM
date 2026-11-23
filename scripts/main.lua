@@ -61,7 +61,8 @@ Quire.config = {
     },
     enable_minimap = true,
     smart_gaps = true,
-    smart_borders = false
+    smart_borders = false,
+    inactive_opacity = 0.90
 }
 
 Quire.current_workspace = 1
@@ -281,6 +282,80 @@ local function layout_columns(ws_id, wx, wy, ww, wh, cfg)
     return cur_x - gaps_in + gaps_out
 end
 
+local applied_opacities = {}
+
+function Quire.is_floating(hwnd)
+    return Quire.floating_windows[hwnd] == true
+end
+
+function Quire.on_float_drag_end(hwnd)
+    if Quire.floating_windows[hwnd] and wm.is_window(hwnd) then
+        local rx, ry, rw, rh = wm.get_window_rect(hwnd)
+        if rx then
+            Quire.floating_rects[hwnd] = {rx, ry, rw, rh}
+        end
+    end
+end
+
+function Quire.update_opacities()
+    if not wm.set_window_opacity then
+        return
+    end
+    local cfg_op = Quire.config.inactive_opacity
+    if cfg_op == nil then
+        cfg_op = 1.0
+    end
+    cfg_op = math.max(0.2, math.min(1.0, cfg_op))
+
+    local function apply(hwnd, target)
+        if not wm.is_window(hwnd) then
+            applied_opacities[hwnd] = nil
+            return
+        end
+        if applied_opacities[hwnd] ~= target then
+            wm.set_window_opacity(hwnd, target)
+            if target >= 0.999 then
+                applied_opacities[hwnd] = nil
+            else
+                applied_opacities[hwnd] = target
+            end
+        end
+    end
+
+    if cfg_op >= 0.999 then
+        local to_clear = {}
+        for hwnd, _ in pairs(applied_opacities) do
+            table.insert(to_clear, hwnd)
+        end
+        for _, hwnd in ipairs(to_clear) do
+            apply(hwnd, 1.0)
+        end
+        return
+    end
+
+    local ws = get_ws(Quire.current_workspace)
+    for _, col in ipairs(ws.columns) do
+        for _, hwnd in ipairs(col.windows) do
+            if not Quire.closing_windows[hwnd] and not Quire.transferring_windows[hwnd] then
+                local is_active = (hwnd == Quire.focused_window) or Quire.fullscreen_windows[hwnd]
+                apply(hwnd, is_active and 1.0 or cfg_op)
+            end
+        end
+    end
+
+    for hwnd, _ in pairs(Quire.floating_windows) do
+        if not Quire.closing_windows[hwnd] and not Quire.transferring_windows[hwnd] then
+            local is_active = (hwnd == Quire.focused_window) or Quire.fullscreen_windows[hwnd]
+            apply(hwnd, is_active and 1.0 or cfg_op)
+        end
+    end
+
+    if Quire.scratchpad_hwnd and Quire.scratchpad_visible then
+        local is_active = (Quire.scratchpad_hwnd == Quire.focused_window)
+        apply(Quire.scratchpad_hwnd, is_active and 1.0 or cfg_op)
+    end
+end
+
 function Quire.retile()
     local wx, wy, ww, wh = wm.get_work_area()
     local cfg = Quire.config
@@ -339,6 +414,7 @@ function Quire.retile()
     for _, c in pairs(Quire.window_currents) do
         c.needs_sync = true
     end
+    Quire.update_opacities()
 end
 
 function Quire.toggle_overview()
@@ -621,6 +697,9 @@ function Quire.save_session()
         f:write("return " .. serialize_table(session))
         f:close()
         log("Session saved successfully!")
+        if Quire.isle and Quire.isle.show_toast then
+            Quire.isle.show_toast("Session Saved", "success")
+        end
         trigger_hud()
     end
 end
@@ -825,6 +904,10 @@ local function remove_window(hwnd, is_destroy)
     Quire.window_ws[hwnd] = nil
     Quire.closing_windows[hwnd] = nil
     Quire.transferring_windows[hwnd] = nil
+    if wm.set_window_opacity and applied_opacities[hwnd] and wm.is_window(hwnd) then
+        wm.set_window_opacity(hwnd, 1.0)
+    end
+    applied_opacities[hwnd] = nil
 
     if was_scratchpad then
         local prev = Quire.scratchpad_prev_focus
@@ -1101,6 +1184,33 @@ function Quire.move_column(dir)
     local ws = get_ws(Quire.current_workspace)
     local layout = get_layout(ws)
     if layout.move_column and layout.move_column(ws, Quire.focused_window, dir) then
+        Quire.retile()
+        trigger_hud()
+    end
+end
+
+function Quire.consume_window(dir)
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+    if layout.consume_window and layout.consume_window(ws, Quire.focused_window, dir or "left") then
+        Quire.retile()
+        trigger_hud()
+    end
+end
+
+function Quire.expel_window(dir)
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+    if layout.expel_window and layout.expel_window(ws, Quire.focused_window, dir or "right") then
+        Quire.retile()
+        trigger_hud()
+    end
+end
+
+function Quire.resize_column(delta)
+    local ws = get_ws(Quire.current_workspace)
+    local layout = get_layout(ws)
+    if layout.resize_column and layout.resize_column(ws, Quire.focused_window, delta) then
         Quire.retile()
         trigger_hud()
     end
@@ -1742,7 +1852,11 @@ Quire.reload_config = function()
     local config_path = wm.get_config_path()
     local fn, load_err = loadfile(config_path)
     if not fn then
+        local msg = "Lua Error: " .. tostring(load_err):gsub("^.*config%.lua:", "line ")
         log("CONFIG FILE ERROR: " .. tostring(load_err))
+        if Quire.isle and Quire.isle.show_toast then
+            Quire.isle.show_toast(msg, "error")
+        end
         return
     end
 
@@ -1765,10 +1879,17 @@ Quire.reload_config = function()
         end
         recheck_tiled_windows()
         log("Config reloaded successfully!")
+        if Quire.isle and Quire.isle.show_toast then
+            Quire.isle.show_toast("Config Reloaded", "success")
+        end
         trigger_hud()
         Quire.retile()
     else
+        local msg = "Lua Error: " .. tostring(run_err):gsub("^.*config%.lua:", "line ")
         log("CONFIG RUNTIME ERROR: " .. tostring(run_err))
+        if Quire.isle and Quire.isle.show_toast then
+            Quire.isle.show_toast(msg, "error")
+        end
     end
 end
 
@@ -1912,34 +2033,41 @@ local function parse_combo(combo)
         end
     end
     local key = parts[#parts]
-    if #key == 1 then
+    local special = {
+        ["LEFT"] = 0x25,
+        ["UP"] = 0x26,
+        ["RIGHT"] = 0x27,
+        ["DOWN"] = 0x28,
+        ["RETURN"] = 0x0D,
+        ["ENTER"] = 0x0D,
+        ["SPACE"] = 0x20,
+        ["TAB"] = 0x09,
+        ["ESCAPE"] = 0x1B,
+        ["GRAVE"] = 0xC0,
+        ["`"] = 0xC0,
+        ["~"] = 0xC0,
+        ["MINUS"] = 0xBD,
+        ["-"] = 0xBD,
+        ["EQUAL"] = 0xBB,
+        ["="] = 0xBB,
+        ["+"] = 0xBB,
+        ["BRACKETLEFT"] = 0xDB,
+        ["["] = 0xDB,
+        ["BRACKETRIGHT"] = 0xDD,
+        ["]"] = 0xDD,
+        ["COMMA"] = 0xBC,
+        [","] = 0xBC,
+        ["PERIOD"] = 0xBE,
+        ["."] = 0xBE,
+        ["SLASH"] = 0xBF,
+        ["SEMICOLON"] = 0xBA
+    }
+    if special[key] then
+        vk = special[key]
+    elseif #key == 1 then
         vk = string.byte(key)
     else
-        local special = {
-            ["LEFT"] = 0x25,
-            ["UP"] = 0x26,
-            ["RIGHT"] = 0x27,
-            ["DOWN"] = 0x28,
-            ["RETURN"] = 0x0D,
-            ["ENTER"] = 0x0D,
-            ["SPACE"] = 0x20,
-            ["TAB"] = 0x09,
-            ["ESCAPE"] = 0x1B,
-            ["GRAVE"] = 0xC0,
-            ["`"] = 0xC0,
-            ["~"] = 0xC0,
-            ["MINUS"] = 0xBD,
-            ["EQUAL"] = 0xBB,
-            ["BRACKETLEFT"] = 0xDB,
-            ["["] = 0xDB,
-            ["BRACKETRIGHT"] = 0xDD,
-            ["]"] = 0xDD,
-            ["COMMA"] = 0xBC,
-            ["PERIOD"] = 0xBE,
-            ["SLASH"] = 0xBF,
-            ["SEMICOLON"] = 0xBA
-        }
-        vk = special[key] or 0
+        vk = 0
     end
     return mod, vk
 end
@@ -1961,9 +2089,14 @@ Quire.on_hotkey = function(id)
     end
 end
 
+local initial_config_err = nil
 local config_path = wm.get_config_path()
 local fn, load_err = loadfile(config_path)
 if not fn then
+    if load_err and not tostring(load_err):find("No such file", 1, true) and not tostring(load_err):find("cannot open", 1, true) then
+        initial_config_err = "Lua Error: " .. tostring(load_err):gsub("^.*config%.lua:", "line ")
+        log("CONFIG FILE ERROR: " .. tostring(load_err))
+    end
     log("Registering default Quire binds...")
     Quire.bind("Alt+H", function()
         Quire.focus_direction("left")
@@ -2025,6 +2158,18 @@ if not fn then
     Quire.bind("Alt+F", Quire.toggle_fullscreen)
     Quire.bind("Alt+V", Quire.toggle_floating)
     Quire.bind("Alt+D", Quire.cycle_column_preset)
+    Quire.bind("Alt+-", function()
+        Quire.resize_column(-0.08)
+    end)
+    Quire.bind("Alt+=", function()
+        Quire.resize_column(0.08)
+    end)
+    Quire.bind("Alt+Comma", function()
+        Quire.consume_window("left")
+    end)
+    Quire.bind("Alt+Period", function()
+        Quire.expel_window("right")
+    end)
     Quire.bind("Alt+Shift+S", Quire.save_session)
     Quire.bind("Alt+Shift+R", Quire.restore_session)
     Quire.bind("Alt+Space", Quire.toggle_launcher)
@@ -2040,6 +2185,7 @@ if not fn then
 else
     local ok, run_err = pcall(fn)
     if not ok then
+        initial_config_err = "Lua Error: " .. tostring(run_err):gsub("^.*config%.lua:", "line ")
         log("CONFIG RUNTIME ERROR: " .. tostring(run_err))
     end
 end
@@ -2078,11 +2224,23 @@ function Quire.cleanup_for_exit()
     local wx, wy, ww, wh = wm.get_work_area()
     local off = 0
 
+    if wm.set_window_opacity then
+        for hwnd, _ in pairs(applied_opacities) do
+            if wm.is_window(hwnd) then
+                wm.set_window_opacity(hwnd, 1.0)
+            end
+        end
+        applied_opacities = {}
+    end
+
     for ws_id, ws in pairs(Quire.workspaces) do
         for _, col in ipairs(ws.columns) do
             for _, hwnd in ipairs(col.windows) do
                 if wm.is_window(hwnd) then
                     wm.cloak_window(hwnd, false)
+                    if wm.set_window_opacity then
+                        wm.set_window_opacity(hwnd, 1.0)
+                    end
                     if wm.set_topmost then
                         wm.set_topmost(hwnd, false)
                     end
@@ -2098,6 +2256,9 @@ function Quire.cleanup_for_exit()
 
     if Quire.scratchpad_hwnd and wm.is_window(Quire.scratchpad_hwnd) then
         wm.cloak_window(Quire.scratchpad_hwnd, false)
+        if wm.set_window_opacity then
+            wm.set_window_opacity(Quire.scratchpad_hwnd, 1.0)
+        end
         if wm.set_topmost then
             wm.set_topmost(Quire.scratchpad_hwnd, false)
         end
@@ -2107,6 +2268,9 @@ function Quire.cleanup_for_exit()
     for hwnd, _ in pairs(Quire.floating_windows) do
         if wm.is_window(hwnd) then
             wm.cloak_window(hwnd, false)
+            if wm.set_window_opacity then
+                wm.set_window_opacity(hwnd, 1.0)
+            end
             if wm.set_topmost then
                 wm.set_topmost(hwnd, false)
             end
@@ -2123,5 +2287,8 @@ if Quire.autostart and type(Quire.autostart) == "table" then
 end
 
 isle.init()
+if initial_config_err and isle.show_toast then
+    isle.show_toast(initial_config_err, "error")
+end
 
 Quire.retile()

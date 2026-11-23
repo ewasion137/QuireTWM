@@ -34,6 +34,7 @@ int GetRamUsage();
 void MediaPlayPause();
 void MediaNext();
 void MediaPrev();
+void MediaSeek(double seconds);
 
 std::string GetActiveMediaTitle();
 MediaInfo GetMediaInfo();

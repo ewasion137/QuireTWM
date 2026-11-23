@@ -28,7 +28,8 @@ static ULONGLONG g_lastTick = 0;
 static std::thread g_workerThread;
 static std::atomic<bool> g_workerRunning{false};
 static std::mutex g_mediaMutex;
-static std::string g_cachedMediaTitle = "";
+static MediaInfo g_cachedMediaInfo;
+static ULONGLONG g_mediaAnchorTick = 0;
 
 static ULONGLONG FileTimeToUint64(const FILETIME &ft) {
     ULARGE_INTEGER u;
@@ -79,40 +80,61 @@ static void EnsureAudioEndpoint() {
     }
 }
 
-static std::string QueryWinRTMedia() {
+static MediaInfo QueryWinRTMedia() {
+    MediaInfo info;
     try {
         using namespace winrt::Windows::Media::Control;
         auto op =
             GlobalSystemMediaTransportControlsSessionManager::RequestAsync();
         auto mgr = op.get();
         if (!mgr)
-            return "";
+            return info;
         auto session = mgr.GetCurrentSession();
         if (!session)
-            return "";
+            return info;
         auto propOp = session.TryGetMediaPropertiesAsync();
         auto props = propOp.get();
         if (!props)
-            return "";
+            return info;
 
         std::wstring title = props.Title().c_str();
         std::wstring artist = props.Artist().c_str();
         if (title.empty())
-            return "";
+            return info;
 
         std::wstring full = artist.empty() ? title : (artist + L" - " + title);
         int len = WideCharToMultiByte(CP_UTF8, 0, full.data(),
                                       static_cast<int>(full.size()), nullptr, 0,
                                       nullptr, nullptr);
-        if (len <= 0)
-            return "";
-        std::string out(len, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, full.data(),
-                            static_cast<int>(full.size()), out.data(), len,
-                            nullptr, nullptr);
-        return out;
+        if (len > 0) {
+            info.title.assign(len, '\0');
+            WideCharToMultiByte(CP_UTF8, 0, full.data(),
+                                static_cast<int>(full.size()), info.title.data(),
+                                len, nullptr, nullptr);
+        }
+
+        if (auto playbackInfo = session.GetPlaybackInfo()) {
+            info.playing =
+                (playbackInfo.PlaybackStatus() ==
+                 GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
+        }
+
+        if (auto timeline = session.GetTimelineProperties()) {
+            auto start = timeline.StartTime();
+            auto end = timeline.EndTime();
+            auto pos = timeline.Position();
+            info.pos = std::chrono::duration<double>(pos - start).count();
+            info.dur = std::chrono::duration<double>(end - start).count();
+            if (info.pos < 0.0)
+                info.pos = 0.0;
+            if (info.dur < 0.0)
+                info.dur = 0.0;
+            if (info.dur > 0.0 && info.pos > info.dur)
+                info.pos = info.dur;
+        }
+        return info;
     } catch (...) {
-        return "";
+        return info;
     }
 }
 
@@ -254,14 +276,16 @@ static std::string QueryActiveAudioSessionWindow() {
 static void MediaWorkerLoop() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     while (g_workerRunning) {
-        std::string title = QueryWinRTMedia();
-        if (title.empty()) {
-            title = QueryActiveAudioSessionWindow();
+        MediaInfo info = QueryWinRTMedia();
+        if (info.title.empty()) {
+            info.title = QueryActiveAudioSessionWindow();
+            info.playing = !info.title.empty();
         }
 
         {
             std::lock_guard<std::mutex> lock(g_mediaMutex);
-            g_cachedMediaTitle = title;
+            g_cachedMediaInfo = std::move(info);
+            g_mediaAnchorTick = GetTickCount64();
         }
 
         for (int i = 0; i < 8 && g_workerRunning; ++i) {
@@ -411,9 +435,58 @@ void MediaPrev() {
     keybd_event(VK_MEDIA_PREV_TRACK, 0, KEYEVENTF_KEYUP, 0);
 }
 
+void MediaSeek(double seconds) {
+    if (seconds < 0.0)
+        seconds = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(g_mediaMutex);
+        if (g_cachedMediaInfo.dur > 0.0 && seconds > g_cachedMediaInfo.dur)
+            seconds = g_cachedMediaInfo.dur;
+        g_cachedMediaInfo.pos = seconds;
+        g_mediaAnchorTick = GetTickCount64();
+    }
+
+    std::thread([seconds]() {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        try {
+            using namespace winrt::Windows::Media::Control;
+            auto mgr = GlobalSystemMediaTransportControlsSessionManager::
+                           RequestAsync()
+                               .get();
+            if (mgr) {
+                if (auto session = mgr.GetCurrentSession()) {
+                    double targetSec = seconds;
+                    if (auto timeline = session.GetTimelineProperties()) {
+                        targetSec +=
+                            std::chrono::duration<double>(timeline.StartTime())
+                                .count();
+                    }
+                    int64_t ticks = static_cast<int64_t>(targetSec * 10000000.0);
+                    session.TryChangePlaybackPositionAsync(ticks).get();
+                }
+            }
+        } catch (...) {
+        }
+        CoUninitialize();
+    }).detach();
+}
+
 std::string GetActiveMediaTitle() {
     std::lock_guard<std::mutex> lock(g_mediaMutex);
-    return g_cachedMediaTitle;
+    return g_cachedMediaInfo.title;
+}
+
+MediaInfo GetMediaInfo() {
+    std::lock_guard<std::mutex> lock(g_mediaMutex);
+    MediaInfo out = g_cachedMediaInfo;
+    if (out.playing && out.dur > 0.0 && g_mediaAnchorTick > 0) {
+        double elapsed =
+            static_cast<double>(GetTickCount64() - g_mediaAnchorTick) / 1000.0;
+        out.pos = out.pos + elapsed;
+        if (out.pos > out.dur)
+            out.pos = out.dur;
+    }
+    return out;
 }
 
 void RegisterLuaBindings(sol::state *lua) {
@@ -441,7 +514,17 @@ void RegisterLuaBindings(sol::state *lua) {
     wm.set_function("media_play_pause", []() { MediaPlayPause(); });
     wm.set_function("media_next", []() { MediaNext(); });
     wm.set_function("media_prev", []() { MediaPrev(); });
+    wm.set_function("media_seek", [](double sec) { MediaSeek(sec); });
     wm.set_function("get_media_title", []() { return GetActiveMediaTitle(); });
+    wm.set_function("get_media_info", [lua]() {
+        MediaInfo info = GetMediaInfo();
+        sol::table t = lua->create_table();
+        t["title"] = info.title;
+        t["playing"] = info.playing;
+        t["pos"] = info.pos;
+        t["dur"] = info.dur;
+        return t;
+    });
 }
 
 } // namespace Isle
