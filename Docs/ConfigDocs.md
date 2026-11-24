@@ -1,144 +1,159 @@
-# QuireTWM Configuration Reference
+# QuireTWM Config Guide
 
-QuireTWM is configured through a single Lua file located at:
+QuireTWM reads its settings from one Lua file at:
+
 ```text
 %USERPROFILE%\.quire\config.lua
 ```
 
-Changes reload automatically upon saving the file without restarting the application.
+When you save this file, QuireTWM reloads your settings right away without a restart.
 
-Configuration Generator: https://ewasion137.github.io/Quire
+Config Generator: https://ewasion137.github.io/Quire
 
 ---
 
 ## Table of Contents
-1. [Layout & General Settings](#1-layout--general-settings)
-2. [Color Palette & Theme](#2-color-palette--theme)
-3. [Spring Physics Engine](#3-spring-physics-engine)
+
+1. [General Settings](#1-general-settings)
+2. [Colors and Theme](#2-colors-and-theme)
+3. [Spring Motion](#3-spring-motion)
 4. [Scratchpad](#4-scratchpad)
 5. [Overview Mode](#5-overview-mode)
-6. [Mouse & Touchpad Gestures](#6-mouse--touchpad-gestures)
+6. [Mouse and Touchpad](#6-mouse-and-touchpad)
 7. [Window Rules](#7-window-rules)
-8. [Keybindings & API Reference](#8-keybindings--api-reference)
-9. [Animation & Visual Effects](#9-animation--visual-effects)
-10. [IPC Interface](#10-ipc-interface)
-11. [Lua Event Hooks](#11-lua-event-hooks)
-12. [Complete Example `config.lua`](#12-complete-example-configlua)
+8. [Keybindings and Functions](#8-keybindings-and-functions)
+9. [Animations](#9-animations)
+10. [Autostart and App Launcher](#10-autostart-and-app-launcher)
+11. [IPC Commands](#11-ipc-commands)
+12. [Lua Hooks](#12-lua-hooks)
+13. [Full Example `config.lua`](#13-full-example-configlua)
 
 ---
 
-## 1. Layout & General Settings
+## 1. General Settings
 
-Control frame rates, gaps, corner rounding, column widths and focus behavior:
+Set frame rate, gaps, rounded corners, borders, opacity and UI widgets:
 
 ```lua
--- Target framerate limit (0 matches your monitor refresh rate automatically)
+-- Max FPS (0 matches your monitor refresh rate)
 Quire.config.fps_cap = 0
 
--- Inner spacing between adjacent tiled windows in pixels
+-- Space between tiled windows in pixels
 Quire.config.gaps_in = 8
 
--- Outer margin between windows and work area edges in pixels
+-- Space between windows and screen edges in pixels
 Quire.config.gaps_out = 14
 
--- Border corner rounding radius in pixels
+-- Corner rounding in pixels
 Quire.config.rounding = 10
 
--- Border outline thickness in pixels
+-- Border width in pixels
 Quire.config.border_size = 2
 
--- Default column width ratio relative to screen width (0.1 to 1.0)
+-- Starting width for new columns (0.1 to 1.0)
 Quire.config.default_column_width = 1.0
 
--- Automatic focus change on mouse hover
+-- Focus windows when the mouse moves over them
 Quire.config.focus_follows_mouse = false
+
+-- Opacity for unfocused windows (0.2 to 1.0)
+Quire.config.inactive_opacity = 0.90
+
+-- Remove gaps when only one window is open on a workspace
+Quire.config.smart_gaps = true
+
+-- Remove borders when only one window is open on a workspace
+Quire.config.smart_borders = false
+
+-- Show or hide the top Isle widget and the bottom minimap
+Quire.config.enable_isle = true
+Quire.config.enable_minimap = true
 ```
 
 ---
 
-## 2. Color Palette & Theme
+## 2. Colors and Theme
 
-Window borders, heads-up displays, launcher items and Alt-Tab cards are drawn via hardware-accelerated Direct2D. Colors use normalized RGBA tables with float values from `0.0` to `1.0`:
+Borders, the Isle bar, the minimap, the launcher and the Alt-Tab switcher use colors made of four numbers from `0.0` to `1.0` for red, green, blue and alpha:
 
 ```lua
--- Border colors
+-- Window border colors
 Quire.config.border_active   = { 0.54, 0.71, 0.98, 1.00 }
 Quire.config.border_inactive = { 0.19, 0.20, 0.27, 0.60 }
 
--- Global UI elements
-Quire.theme.font_family         = "Segoe UI Variable"
-Quire.theme.bg_color            = { 0.05, 0.05, 0.08, 0.92 }
-Quire.theme.accent_color        = { 0.54, 0.71, 0.98, 1.00 }
-Quire.theme.text_color          = { 0.90, 0.90, 0.95, 1.00 }
-Quire.theme.text_dim            = { 0.55, 0.55, 0.65, 0.80 }
+-- Global theme colors and font
+Quire.theme.font_family  = "Segoe UI Variable"
+Quire.theme.bg_color     = { 0.05, 0.05, 0.08, 0.92 }
+Quire.theme.accent_color = { 0.54, 0.71, 0.98, 1.00 }
+Quire.theme.text_color   = { 0.90, 0.90, 0.95, 1.00 }
+Quire.theme.text_dim     = { 0.55, 0.55, 0.65, 0.80 }
 ```
 
 ---
 
-## 3. Spring Physics Engine
+## 3. Spring Motion
 
-Horizontal ribbon camera motion and vertical workspace transitions run on second-order spring dynamics:
+Window movement and workspace switches use spring physics:
 
 ```lua
 Quire.config.spring = {
-    stiffness = 160,
-    damping   = 22,
+    stiffness = 170,
+    damping   = 24,
     mass      = 1.0
 }
 ```
 
-Higher stiffness creates faster movement, while higher damping prevents oscillations.
+Higher `stiffness` makes windows move faster. Higher `damping` stops them from bouncing.
 
 ---
 
 ## 4. Scratchpad
 
-A scratchpad allows dropping down an overlay utility window from the top edge of your screen. You can set the default program command, toggle visibility or pin any existing window into the scratchpad slot:
+The scratchpad is a floating window that slides down from the top of the screen. You can set which app it opens, toggle it or turn any open window into your scratchpad:
 
 ```lua
--- Program command executed when toggling an uninitialized scratchpad
+-- App to open when no scratchpad window exists yet
 Quire.config.scratchpad_cmd = "alacritty.exe"
 
--- Toggle scratchpad drop-down
+-- Show or hide the scratchpad
 Quire.bind("Alt+Grave", Quire.toggle_scratchpad)
 
--- Turn focused window into scratchpad or return it back to tiling
+-- Turn the active window into the scratchpad or put it back into tiling
 Quire.bind("Alt+Shift+Grave", Quire.mark_scratchpad)
 ```
 
-Hiding the scratchpad restores focus to your previous window.
+When you hide the scratchpad, focus goes back to the window you were using before.
 
 ---
 
 ## 5. Overview Mode
 
-Overview scales all workspace columns down to 72% size centered vertically on your screen. This gives you a clear panoramic view of your entire ribbon:
+Overview zooms all columns out to 72% size so you can see your whole workspace at once:
 
 ```lua
--- Toggle overview zoom
 Quire.bind("Alt+O", Quire.toggle_overview)
 ```
 
-While in Overview mode:
-- Vertical mouse wheel rolls smoothly glide the ribbon horizontally.
-- Directional focus hotkeys automatically center the camera on the target column.
-- Re-triggering `Alt+O` restores full view and focuses the selected window.
+In Overview mode:
+- Scrolling the mouse wheel moves the view left and right.
+- Focus keys jump between windows and center the view on them.
+- Pressing `Alt+O` again returns to normal view and focuses the selected window.
 
 ---
 
-## 6. Mouse & Touchpad Gestures
+## 6. Mouse and Touchpad
 
-QuireTWM reads Precision Touchpad and mouse inputs directly:
+QuireTWM supports touchpad gestures and mouse wheel shortcuts:
 
-- **Touchpad Horizontal Swipe**: Two-finger horizontal panning scrolls the camera across your workspace columns in real time.
-- **Touchpad Speed Multiplier**: Adjust swipe sensitivity via `Quire.config.trackpad_speed = 1.2`.
-- **Workspace Wheel Scrolling**: Rolling your mouse wheel while holding `Ctrl` or `Alt+Ctrl` cycles through workspaces.
+- **Two-finger horizontal swipe**: Scrolls left and right across columns.
+- **Touchpad speed**: Set swipe speed with `Quire.config.trackpad_speed = 1.2`.
+- **Workspace scroll**: Hold `Ctrl` or `Alt+Ctrl` and scroll to switch workspaces.
 
 ---
 
 ## 7. Window Rules
 
-Define applications that should bypass automatic tiling and open directly as floating windows. Matches process names, window titles and Win32 class strings:
+Add app names, window titles or Win32 class names to `Quire.window_rules.float` to keep those windows floating:
 
 ```lua
 table.insert(Quire.window_rules.float, "CalculatorApp")
@@ -149,128 +164,150 @@ table.insert(Quire.window_rules.float, "NVIDIA GeForce Experience")
 
 ---
 
-## 8. Keybindings & API Reference
+## 8. Keybindings and Functions
 
-Key combinations are registered using `Quire.bind(chord, callback)`. Supported modifiers are `Alt`, `Ctrl`, `Shift` and `Super` (or `Win`).
+Add keybindings with `Quire.bind(keys, callback)`. You can use `Alt`, `Ctrl`, `Shift` and `Super` (or `Win`) as modifiers.
 
-### Window Management
+### Windows and Columns
 
-| Method | Description |
+| Function | What it does |
 | :--- | :--- |
 | `Quire.focus_direction(dir)` | Move focus (`"left"`, `"right"`, `"up"` or `"down"`). |
-| `Quire.move_column(dir)` | Swap current column position (`"left"` or `"right"`). |
-| `Quire.cycle_column_preset()` | Cycle width presets: 100%, 66% and 50%. |
-| `Quire.toggle_floating()` | Toggle floating state for active window. |
-| `Quire.toggle_fullscreen()` | Toggle fullscreen view for active window. |
-| `Quire.safe_close_window(hwnd)` | Close window using smooth animated exit. |
-| `Quire.move_window_to_monitor(dir)` | Move active window to adjacent display (`"left"` or `"right"`). |
+| `Quire.move_column(dir)` | Move the active column (`"left"` or `"right"`). |
+| `Quire.consume_window(dir)` | Pull a window into the active column (`"left"` or `"right"`). |
+| `Quire.expel_window(dir)` | Push the active window out into its own column (`"left"` or `"right"`). |
+| `Quire.resize_column(delta)` | Change the active column width by a number like `0.08` or `-0.08`. |
+| `Quire.cycle_column_preset()` | Switch column width between 100%, 66% and 50%. |
+| `Quire.toggle_floating()` | Switch the active window between tiled and floating. |
+| `Quire.toggle_fullscreen()` | Make the active window fill the screen or go back to normal. |
+| `Quire.safe_close_window(hwnd)` | Close a window with a close animation. |
+| `Quire.move_window_to_monitor(dir)` | Move the active window to another monitor (`"left"` or `"right"`). |
 
-### Workspaces & Session
+### Workspaces, Session and Launcher
 
-| Method | Description |
+| Function | What it does |
 | :--- | :--- |
-| `Quire.switch_workspace(id)` | Switch directly to workspace number (1 to 9). |
-| `Quire.cycle_workspace(step)` | Switch relative workspace (`-1` previous, `1` next). |
-| `Quire.move_to_workspace(id)` | Transfer active window to workspace number (1 to 9). |
-| `Quire.save_session()` | Save current column and workspace structure to file. |
-| `Quire.restore_session()` | Reopen and place saved layout across workspaces. |
-| `Quire.reload_config()` | Force reload configuration file. |
+| `Quire.switch_workspace(id)` | Go to workspace `1` through `9`. |
+| `Quire.cycle_workspace(step)` | Go to the next (`1`) or previous (`-1`) workspace. |
+| `Quire.move_to_workspace(id)` | Send the active window to workspace `1` through `9`. |
+| `Quire.save_session()` | Save open windows and workspaces to a file. |
+| `Quire.restore_session()` | Reopen and place your saved layout. |
+| `Quire.toggle_launcher()` | Open or close the app launcher. |
+| `Quire.reload_config()` | Reload `config.lua`. |
 
-### System & Helper Methods
+### Window Helpers (`wm`)
 
-| Method | Description |
+| Function | What it does |
 | :--- | :--- |
-| `wm.spawn(path)` | Launch process using system shell. |
-| `wm.close_window(hwnd)` | Send immediate close message to window handle. |
-| `wm.focus_window(hwnd)` | Bring window handle to foreground. |
-| `wm.get_window_title(hwnd)` | Query window title text string. |
-| `wm.get_process_name(hwnd)` | Query process executable name string. |
-| `wm.get_class_name(hwnd)` | Query Win32 class string. |
-| `wm.get_work_area()` | Return work area bounds: `x, y, w, h`. |
-| `wm.get_screen_size()` | Return display resolution: `w, h`. |
+| `wm.spawn(path)` | Start an app or command. |
+| `wm.close_window(hwnd)` | Close a window right away. |
+| `wm.focus_window(hwnd)` | Focus a window. |
+| `wm.get_window_title(hwnd)` | Get a window title. |
+| `wm.get_process_name(hwnd)` | Get an app executable name. |
+| `wm.get_class_name(hwnd)` | Get a Win32 class name. |
+| `wm.get_work_area()` | Get usable screen area: `x, y, w, h`. |
+| `wm.get_screen_size()` | Get full screen size: `w, h`. |
 
 ---
 
-## 9. Animation & Visual Effects
+## 9. Animations
 
-Choose easing curves, idle border motion and closing animations:
+Pick how windows move, how active borders animate when idle and how windows close:
 
 ```lua
--- Transition curves: "spring", "back", "elastic", "bounce", "ease_in_out", "ease_in", "ease_out" or "linear"
+-- Movement curve: "spring", "linear", "ease_in", "ease_out", "ease_in_out",
+-- "expo_out", "circ_out", "sine", "back", "bounce" or "elastic"
 Quire.config.move_easing = "spring"
 
--- Idle border animations: "pulse", "heartbeat", "shake", "flash", "wobble" or "none"
+-- Duration in seconds when move_easing is set to a curve other than "spring"
+Quire.config.move_duration = 0.28
+
+-- Active border idle effect: "pulse", "breathe", "rainbow", "neon",
+-- "heartbeat", "flash", "shake", "wobble" or "none"
 Quire.config.idle_mode = "pulse"
 
--- Window closing animations: "scale", "slide", "fold" or "curtain"
+-- Window close animation: "scale", "zoom", "slide", "pop", "crt", "fold" or "curtain"
 Quire.config.close_anim = "scale"
 ```
 
 ---
 
-## 10. IPC Interface
+## 10. Autostart and App Launcher
 
-QuireTWM exposes a local named pipe at `\\.\pipe\quire`. Send plain text strings to trigger actions or read status information from external scripts and bars:
+Run apps automatically when QuireTWM starts with `Quire.autostart`, and list apps for the launcher and tray menu in `Quire.apps`:
 
-```powershell
-# Example PowerShell command
-[System.IO.File]::WriteAllText("\\.\pipe\quire", "workspace 2")
+```lua
+Quire.autostart = {
+    "alacritty.exe"
+}
+
+Quire.apps = {
+    { name = "Terminal", path = "cmd.exe" },
+    { name = "Explorer", path = "explorer.exe" },
+    { name = "Task Manager", path = "taskmgr.exe" }
+}
 ```
-
-### Supported IPC Commands
-
-| Command | Action |
-| :--- | :--- |
-| `focus left` / `right` / `up` / `down` | Shift focus in specified direction. |
-| `move left` / `right` | Swap column in specified direction. |
-| `workspace <num>` | Switch active workspace. |
-| `movetoworkspace <num>` | Move active window to workspace. |
-| `togglefloating` | Toggle floating state. |
-| `fullscreen` | Toggle fullscreen state. |
-| `preset` | Cycle column width preset. |
-| `close` | Close currently focused window. |
-| `reload` | Reload configuration. |
-| `clients` | List all tracked windows across workspaces. |
 
 ---
 
-## 11. Lua Event Hooks
+## 11. IPC Commands
 
-Attach custom callbacks to engine lifecycle events:
+QuireTWM listens on the named pipe `\\.\pipe\quire`. External scripts and status bars can write plain text commands to it:
+
+```powershell
+[System.IO.File]::WriteAllText("\\.\pipe\quire", "workspace 2")
+```
+
+| Command | Action |
+| :--- | :--- |
+| `focus left` / `right` / `up` / `down` | Move focus. |
+| `move left` / `right` | Move the active column. |
+| `workspace <num>` | Switch to a workspace. |
+| `movetoworkspace <num>` | Move the active window to a workspace. |
+| `togglefloating` | Toggle floating on the active window. |
+| `fullscreen` | Toggle fullscreen on the active window. |
+| `preset` | Cycle column width preset. |
+| `close` | Close the active window. |
+| `reload` | Reload `config.lua`. |
+| `clients` | List all tiled windows. |
+
+---
+
+## 12. Lua Hooks
+
+Run your own Lua code when windows open, close, get focus, change workspaces or draw on screen:
 
 ```lua
--- Window created or added
 Quire.hooks.on_window_open = function(hwnd, title, class)
 end
 
--- Window destroyed or closed
 Quire.hooks.on_window_close = function(hwnd)
 end
 
--- Window focused
 Quire.hooks.on_window_focus = function(hwnd, title, class)
 end
 
--- Workspace changed
 Quire.hooks.on_workspace_change = function(old_ws, new_ws)
 end
 
--- Custom border drawing override (return true to skip built-in border)
+-- Return true to skip drawing the default border
 Quire.hooks.on_draw_window_border = function(ctx)
     return false
 end
 
--- Custom HUD rendering override
 Quire.hooks.on_draw_hud = function(ctx)
+end
+
+Quire.hooks.on_post_render = function(now, sw, sh)
 end
 ```
 
 ---
 
-## 12. Complete Example `config.lua`
+## 13. Full Example `config.lua`
 
 ```lua
--- QuireTWM Configuration
+-- QuireTWM Config
 -- File: %USERPROFILE%\.quire\config.lua
 
 Quire.config.fps_cap = 0
@@ -280,6 +317,11 @@ Quire.config.rounding = 10
 Quire.config.border_size = 2
 Quire.config.default_column_width = 1.0
 Quire.config.focus_follows_mouse = false
+Quire.config.inactive_opacity = 0.90
+Quire.config.smart_gaps = true
+Quire.config.smart_borders = false
+Quire.config.enable_isle = true
+Quire.config.enable_minimap = true
 Quire.config.scratchpad_cmd = "alacritty.exe"
 Quire.config.trackpad_speed = 1.2
 
@@ -287,31 +329,36 @@ Quire.config.border_active = { 0.54, 0.71, 0.98, 1.00 }
 Quire.config.border_inactive = { 0.19, 0.20, 0.27, 0.60 }
 
 Quire.config.spring = {
-    stiffness = 160,
-    damping = 22,
+    stiffness = 170,
+    damping = 24,
     mass = 1.0
 }
 
 Quire.config.idle_mode = "pulse"
 Quire.config.close_anim = "scale"
 Quire.config.move_easing = "spring"
+Quire.config.move_duration = 0.28
 
 table.insert(Quire.window_rules.float, "CalculatorApp")
 table.insert(Quire.window_rules.float, "TaskManagerWindow")
 table.insert(Quire.window_rules.float, "Steam")
 
--- Focus navigation
+-- Focus
 Quire.bind("Alt+H", function() Quire.focus_direction("left") end)
 Quire.bind("Alt+L", function() Quire.focus_direction("right") end)
 Quire.bind("Alt+K", function() Quire.focus_direction("up") end)
 Quire.bind("Alt+J", function() Quire.focus_direction("down") end)
 
--- Column layout
+-- Columns
 Quire.bind("Alt+Shift+H", function() Quire.move_column("left") end)
 Quire.bind("Alt+Shift+L", function() Quire.move_column("right") end)
+Quire.bind("Alt+Comma", function() Quire.consume_window("left") end)
+Quire.bind("Alt+Period", function() Quire.expel_window("right") end)
+Quire.bind("Alt+-", function() Quire.resize_column(-0.08) end)
+Quire.bind("Alt+=", function() Quire.resize_column(0.08) end)
 Quire.bind("Alt+D", Quire.cycle_column_preset)
 
--- Window controls
+-- Windows
 Quire.bind("Alt+V", Quire.toggle_floating)
 Quire.bind("Alt+F", Quire.toggle_fullscreen)
 Quire.bind("Alt+Shift+Q", function()
@@ -320,7 +367,7 @@ Quire.bind("Alt+Shift+Q", function()
     end
 end)
 
--- Workspace cycling
+-- Workspaces
 Quire.bind("Alt+Q", function() Quire.cycle_workspace(-1) end)
 Quire.bind("Alt+E", function() Quire.cycle_workspace(1) end)
 
@@ -329,22 +376,22 @@ Quire.bind("Alt+O", Quire.toggle_overview)
 Quire.bind("Alt+Grave", Quire.toggle_scratchpad)
 Quire.bind("Alt+Shift+Grave", Quire.mark_scratchpad)
 
--- Display migration
+-- Monitors
 Quire.bind("Alt+Ctrl+H", function() Quire.move_window_to_monitor("left") end)
 Quire.bind("Alt+Ctrl+L", function() Quire.move_window_to_monitor("right") end)
 
--- Session management
+-- Session
 Quire.bind("Alt+Shift+S", Quire.save_session)
 Quire.bind("Alt+Shift+R", Quire.restore_session)
 
--- Built-in launcher setup
+-- Launcher
 Quire.apps = {
     { name = "Terminal", path = "cmd.exe" },
     { name = "Explorer", path = "explorer.exe" },
     { name = "Task Manager", path = "taskmgr.exe" }
 }
 
-Quire.bind("Alt+Space", launcher.toggle)
+Quire.bind("Alt+Space", Quire.toggle_launcher)
 Quire.bind("Alt+Return", function()
     if Quire.launcher_active then
         launcher.commit()
@@ -354,11 +401,11 @@ Quire.bind("Alt+Return", function()
 end)
 Quire.bind("Alt+Escape", function()
     if Quire.launcher_active then
-        launcher.toggle()
+        Quire.toggle_launcher()
     end
 end)
 
--- Numbered workspace keybindings (1 to 9)
+-- Numbered workspaces (1 to 9)
 for i = 1, 9 do
     Quire.bind("Alt+" .. i, function() Quire.switch_workspace(i) end)
     Quire.bind("Alt+Shift+" .. i, function() Quire.move_to_workspace(i) end)
